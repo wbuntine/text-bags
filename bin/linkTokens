@@ -96,8 +96,8 @@ sub tabletext() {
     if ( scalar @{$sp} != scalar @{$sp2} ){
 	print STDERR "Texts different length ...\n TEXT-1: " .
 	    join(" ",@{$sp}) . "\n TEXT-2: " .
-	    join(" ",@{$sp2});
-	exit(1);
+	    join(" ",@{$sp2}). "\n";
+	# exit(1);
     }
     for (my $k=$#{$sp}; $k>=0; $k--) {
         if ( !defined($lcword{lc($sp->[$k])}) ) {
