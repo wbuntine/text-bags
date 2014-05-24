@@ -46,6 +46,7 @@ my $stem = shift();
 my   %featmap = ();
 my   @featcnt = ();
 my   @feattype = ();
+my   @feattype = ();
 sub LoadTables() {
   open(FEATS,"<$stem.words") or die "Cannot open input '$stem.words': $!";
   binmode FEATS, ":utf8";
@@ -54,7 +55,10 @@ sub LoadTables() {
     chomp();
     my @a = split();
     my $word = join(" ",@a[5..$#a]);
+    #  fill in current, just in case we get nothing
+    $feattype[$a[0]] = $word;
     if ( defined($lcword{lc($word)}) ) { 
+        #  these forced to be lc.
         $featcnt[$a[0]] = 1;
 	$feattype[$a[0]] = lc($word);
     } elsif ( $a[1] eq "text" ) { 
@@ -62,7 +66,6 @@ sub LoadTables() {
     } else {
 	#   fill in dummy value for non text for printing
 	$featcnt[$a[0]] = 1;
-	$feattype[$a[0]] = join(" ",$word);
     }
   }
   close(FEATS);
@@ -165,12 +168,9 @@ close(I);
 
 print STDERR "Got " . ($#feattype + 1) . " tokens\n";
 
+#  now print the results
 for (my $i=0; $i<=$#feattype; $i++) {
-    if ( !defined($feattype[$i]) ) {
-	print STDERR "No types found for $i\n";
-	next;
-    }
-    if ( $featcnt[$i]==1 ) {
+    if ( !defined($featcnt[$i]) || $featcnt[$i]==1 ) {
 	print $feattype[$i] . "\n";
 	next;
     }
