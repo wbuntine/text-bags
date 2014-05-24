@@ -46,7 +46,6 @@ my $stem = shift();
 my   %featmap = ();
 my   @featcnt = ();
 my   @feattype = ();
-my   @feattype = ();
 sub LoadTables() {
   open(FEATS,"<$stem.words") or die "Cannot open input '$stem.words': $!";
   binmode FEATS, ":utf8";
