@@ -18,10 +18,16 @@ binmode STDERR, ":utf8";
 
 my $dictsize = 0;
 my $docno = 0;
+#  set to filename containing lower case words to force lowercase
+my $LCDICT;  
+
+#  hash of words to force lower-case
+my %lcword = (); 
 
 #  check options
 
 GetOptions(
+    'lcdict=s' => \$LCDICT,
     'man'      => sub {pod2usage(-exitstatus => 0, -verbose => 2)},
     'h|help'       => sub {pod2usage(1)},
     'v|verbose' => \$links::File::verbose,
@@ -47,12 +53,16 @@ sub LoadTables() {
   while ( defined($_=<FEATS>) ) {
     chomp();
     my @a = split();
-    if ( $a[1] eq "text" ) { 
-	$featmap{$a[2]} = $a[0];
+    my $word = join(" ",@a[5..$#a]);
+    if ( defined($lcword{lc($word)}) ) { 
+        $featcnt[$a[0]] = 1;
+	$feattype[$a[0]] = lc($word);
+    } elsif ( $a[1] eq "text" ) { 
+        $featmap{$a[2]} = $a[0];
     } else {
 	#   fill in dummy value for non text for printing
 	$featcnt[$a[0]] = 1;
-	$feattype[$a[0]] = join(" ",@a[5..$#a]);
+	$feattype[$a[0]] = join(" ",$word);
     }
   }
   close(FEATS);
@@ -88,19 +98,37 @@ sub tabletext() {
 	exit(1);
     }
     for (my $k=$#{$sp}; $k>=0; $k--) {
-	my $kk = $featmap{&tablehash($sp->[$k])};
-	if ( !defined($kk) ) {
-	    $kk = -1;
-	} else {
-	    print "Checking $kk " . $sp->[$k] . " " . $sp2->[$k] . "\n";
-	    $featcnt[$kk]++;
-	    if ( $featcnt[$kk]==1 ) {
-		$feattype[$kk] = "$sp2->[$k]";
-	    } elsif ( $featcnt[$kk]<=20 ) {
-		$feattype[$kk] .= " $sp2->[$k]";
-	    }
-	}
+        if ( !defined($lcword{lc($sp->[$k])}) ) {
+            my $kk = $featmap{&tablehash($sp->[$k])};
+            if ( defined($kk) ) {
+                # print "Checking $kk " . $sp->[$k] . " " . $sp2->[$k] . "\n";
+                $featcnt[$kk]++;
+                if ( $featcnt[$kk]==1 ) {
+                    $feattype[$kk] = "$sp2->[$k]";
+                } elsif ( $featcnt[$kk]<=20 ) {
+                    $feattype[$kk] .= " $sp2->[$k]";
+                }
+            }
+        }
     }
+}
+
+#  load up dictionary
+if ( defined($LCDICT) ) {
+    my $words = 0;
+    open(D,"<$LCDICT") or die "Cannot open $LCDICT\n";
+    while ( (my $line=<D>) ) {
+        chomp($line);
+        $line =~ s/\s+/ /g;
+        $line =~ s/\s+$//g;
+        $line =~ s/^\s+//g;
+        foreach my $w ( split(/ /,$line) ) {
+            $lcword{lc($w)} = 1;
+            $words++;
+        }
+    }
+    close(D);
+    print STDERR "Read $words words from '$LCDICT'\n";
 }
 
 #  this is the standard input parsing skeleton
@@ -179,6 +207,7 @@ Options:
     LINK-FILE        Filename for input links file.
     STEM             Stem for output file, a ".tokens2" file output.
     -h, --help       display help message and exit.
+    --lcdict File    filename of lower-case dictionary.
      --man           print man page and exit.
 
 =head1 DESCRIPTION
@@ -186,7 +215,9 @@ Options:
 Input file of links and tags is assumed to be in UTF-8 encoding
 in the format given in I<linkTables>(1).
 
-Output file in form STEM.tokens.
+Output to STDOUT list of tokens in form 
+F<STEM.tokens>
+but with the preferred capitalisation estimated from the content.
 
 =head1 SEE ALSO
 
