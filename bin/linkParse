@@ -1,0 +1,186 @@
+#!/usr/bin/perl -w
+
+use strict;
+use utf8;
+use POSIX;
+use HTML::Entities;
+use links::URLs;
+use links::File;
+use Getopt::Long;
+use Pod::Usage;
+use Lingua::Stem;
+use FileHandle;
+use IO::Pipe;
+use File::Tail;
+
+# encoding pragmas follow any includes like "use"
+use encoding 'utf8';
+use open ':utf8';
+binmode STDIN, ":utf8";
+binmode STDERR, ":utf8";
+
+my $CANDCHOME =  $ENV{'CANDCHOME'}; 
+if ( !defined($CANDCHOME) || ! -d $CANDCHOME ) {
+    print STDERR "Need environment variable CANDCHOME for C&C home defined.\n";
+    exit(1);
+}
+my $CANDCBIN = "$CANDCHOME/bin/candc";
+if ( ! -x $CANDCBIN ) {
+    print STDERR "Need C&C executable $CANDCBIN or $CANDCHOME is bad C&C home directory.\n";
+    exit(1);
+}
+my $CANDCMODEL = "$CANDCHOME/models/";
+if ( ! -d $CANDCMODEL ) {
+    print STDERR "Need C&C model directory $CANDCMODEL .\n";
+    exit(1);
+}
+
+my $CANDC = "$CANDCBIN --models $CANDCMODEL --candc-compact ";
+
+my $titletext = 0;
+my $stopfile = "";
+my %stops = ();
+my $verbose = 0;
+my $status = 0;
+
+#  check options
+
+GetOptions(
+     'man'       => sub {pod2usage(-exitstatus => 0, -verbose => 2)},
+      'stopfile=s' => \$stopfile,
+      'titletext' => \$titletext,
+      'status=i' => \$status,
+      'v|verbose' => \$verbose,
+      'h|help'       => sub {pod2usage(1)}
+);
+
+pod2usage(-message => "ERROR: need input file and stem")
+      if ( $#ARGV != 1 );
+
+my $file = shift();
+my $stem = shift();
+
+if ( $stopfile ) {
+    open(S,"<$stopfile");
+    while ( defined($_=<S>) ) {
+	chomp();
+	$stops{lc($_)} = 1;
+    }
+    close(S);
+    if ( $verbose ) {
+	print STDERR "Stopwords from '$stopfile' loaded\n";
+    }
+}
+
+my $child = fork();
+
+if ( ! defined($child) ) {
+    die "Could not fork\n";
+}
+unlink("$stem.cout");
+if ( $child==0 ) {
+    #  in child
+    &links::File::openzip(\*I,$file,"linkdata");
+    open(PF, "|  $CANDC 2>/dev/null | grep -e '^<c> ' > $stem.cout");
+    binmode PF, ':utf8';
+    my $line = 0;
+    while ( defined($_=<I>) ) {
+	if ( /^D ([^ ]*) ([^ ]*) (.*)$/ ) {
+	    #  create dummy line to enable detection of docs
+	    my @a=split(); 
+	    print PF "($a[2])\n";
+	    $line ++;
+	    if ( $status>0 && ($line % $status)==0 ) {
+		print STDERR ".";
+	    }
+	} elsif ( /^text / ) {
+	    s/^text //; 
+	    print PF $_;
+	}
+    }
+    print PF "(EOF)\n";
+    close(I);
+    close(PF);
+    if ( $status>0 ) { print STDERR "\n"; }
+    print STDERR "Input $line documents for C&C\n";
+    exit(0);
+}
+#  wait for file to be created, up to 50 seconds
+my $sleeper=0;
+while ( ! -f "$stem.cout" && $sleeper<50 ) {
+    $sleeper++;
+    sleep(1);
+}
+$file = File::Tail->new(name=>"$stem.cout", maxinterval=>30, adjustafter=>100);
+while( defined($_=$file->read) && $_ !~ /^<c> (EOF)|(EOF)|NNP|/ ) {
+    # print;
+}
+
+my $ret = waitpid($child,0);
+if ( $ret<=0 ) {
+    die "Could not wait on child, $?\n";
+}
+print STDERR "Child C&C process terminated\n";
+
+exit 0;
+
+__END__
+
+=head1 NAME
+    
+linkParse - EXPERIMENTAL, parse text lines using C&C parser and create parsed text
+
+=head1 SYNOPSIS
+    
+linkParse [--stopfile FILE] LINK-FILE STEM
+
+Options:
+
+    LINK-FILE           Filename for input link file usually created by XSL
+    STEM                Output to "$STEM.cout"
+    --status I          Print a "." every I docs as a status update
+    --stopfile F        do not enter these words in text tables
+    -h, --help          display help message and exit.
+     --man              print man page and exit.
+    -v --verbose        increase verbosity level
+
+=head1 DESCRIPTION
+
+The C&C parser can be found at
+I<http://svn.ask.it.usyd.edu.au/trac/candc/>.
+
+Looks for the C&C home directory to locate the executable and the models.  This is specified by an environment variable CANDCHOME.  To change the executable, the model used, or the command line argument, edit the top of the 
+I<linkParse>(1), 
+file.
+
+Input file of links, link text and redirects in the data format described in 
+I<linkTables>(1), 
+picks out the text lines and passes them to the C&C parser.  Output of the parsers "<C>" lines is sent to "$STEM.cout".  To save other information, edit the "grep" command.  
+
+Documents in the output are started with a single line such as
+"(03985)" which C&C converts to "<c> (03985)|(03985)|CD|I-NP|O|N".
+The final line is marked with an "(EOF)" which C&C converts to "<c> (EOF)|(EOF)|NNP|I-NP|O|N".
+
+
+=head1 SEE ALSO
+
+I<links::URLs>(3), 
+I<linkBags>(1), 
+I<linkTables>(1), 
+
+text-bags is in 
+F<http://github.com>
+
+=head1 AUTHOR
+
+Wray Buntine
+
+=head1 COPYRIGHT AND LICENSE
+
+Copyright (C) 2011 Wray Buntine
+
+This library is free software; you can redistribute it and/or modify
+it under the same terms as Perl itself, either Perl version 5.8.4 or,
+at your option, any later version of Perl 5 you may have available.
+
+=cut

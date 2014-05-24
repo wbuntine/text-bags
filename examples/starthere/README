@@ -1,0 +1,39 @@
+Here is a worked example.  wiki.links.gz is a slightly edited
+set of Wikipedia records produced by wex2link.
+
+First, count the number of records:
+  zgrep "^D " wiki.links | wc -l
+Then print out the record URLS:
+  zgrep "^D " wiki.links | cut -f 2 -d ' '
+and their titles:
+  zgrep "^D " wiki.links | cut -f 4- -d ' '
+
+Now we'll split text on the sentences.  This is done already
+for the Wikipedia data, but I reverse some by hand so you could
+see it work.
+  zcat wiki.links | linkSent > ws.links
+Note the sentence splitter is slow but its a good one.
+Compare:
+  zdiff wiki.links.gz ws.links
+ 
+Now we'll build some bags.   First build the dictionaries and
+create other meta data.
+  linkTables --stemming --mincount=2 --stopfile=stops.txt ws.links ws
+You should inspect the various files created.
+A list of tokens:       ws.tokens
+Dictionary data:        ws.words
+Listing of doc titles:  ws.titles
+Document data:          ws.docs
+General config.:        ws.srcpar
+
+Now build a co-occurence matrix.  Indices given are relative to the
+.words or .token file.
+  linkCoco ws.links ws
+This only used for certain tasks, not used generally, but we use it
+on the Wikipedia.
+
+Now build some bags.
+   linkBags --matlab ws.links ws
+   linkBags --ldac ws.links ws
+Note that it reads the configuration data from ws.srcpar to pick
+up the command line details such as stemming.

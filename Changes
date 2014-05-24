@@ -1,0 +1,32 @@
+First version 0.1:
+Second release 0.51:
+	* made .srcpar record configuration so no longer needed
+         duplicate switches across calls
+        * added linkCoco and linkSent
+	* added --coll options to linkTables and linkBags
+Current release 0.6:
+        * minor mods to --coll, e.g., adding .wordlen file
+        * added --ldacol to output LDA-COL from Matlab Topic Modeling Toolbox
+        * some mods to handle very large data files
+	* added --colllastnotstop option
+Current release 0.61
+        * some documentation in man entries
+        * added --collnotstop and --sag options
+	* is SVN version 28
+Current release 0.62
+        * added --stc and --libsvm options
+	* all the --stc, --ldac, --libsvm options now offset dictionary indices
+            by 1 to match traditional usage
+        * added --match and --tagmatch options
+        * special handling of "topic" type to allow use of text classification
+	* added linkText to generate queries
+	* updated the examples, noting WEX is no longer available
+Current release 0.63
+	* updated man pages
+	* made a simple user guide and dropped at top level
+	* deleted some old scripts
+	* improved installation instructions
+Current release 0.7
+        * moved user guide into 'doc/' with Makefile
+        * changed name to "text-bags" (was DCA-bags)
+        * new command linkTokens to create preferred capitalisation of tokens

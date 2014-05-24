@@ -1,0 +1,208 @@
+#!/usr/bin/perl -w
+
+use strict;
+use Getopt::Long;
+use Pod::Usage;
+use POSIX;
+use Encode;
+use links::URLs;
+use links::File;
+use IO::Handle; 
+use Lingua::Stem;
+
+###################### CONFIGURATION #####################
+
+#  ensure sort handles UTF8 order
+my $SORTCODE = "LC_ALL=en_US.UTF-8; export LC_ALL;" ;
+
+############ END CONFIGURATION ######################
+
+#  autoflush
+select((select(STDERR), $| = 1)[0]);
+
+# encoding pragmas follow any includes like "use"
+use encoding 'utf8';
+use open ':utf8';
+binmode STDIN, ":utf8";
+binmode STDERR, ":utf8";
+
+my $stem = "";
+
+# shared vars
+my $featcount = 0;
+my %featmap = ();        #  maps feature hash to feature index
+my %docfeat = ();        #  true if its a doc/internal link
+my %type = ();
+my %typerev = ();
+# my @token = ();
+
+# per bag data
+my %feats = ();
+my @feats = ();
+
+
+#################################################################
+#
+#  Build routines
+#
+#################################################################
+
+my %textlike = ("text",1, "coll", 1, "stop", 1);
+#  ensure to make "link" entries dominate, they should never be
+#  dropped in favor of non-link entries;
+#  returns 1 if entered OK, otherwise 0
+sub table() {
+    my $tp = $_[0];
+    my $text = $_[1];
+    my $tpc = $typerev{$tp};
+    if ( !defined($tpc) ) {
+	print STDERR "Typecode '$tp' unknown\n";
+	exit(1);
+    }
+    my $code = "$tpc$text";
+    my $h = &links::URLs::easyhash64char($code);
+    # print STDERR "table $coll: $tp -> $text; h=$h";
+    if ( defined($featmap{$h}) ) { 
+	push(@feats, $h);
+	return 1;
+    } 
+    return 0;
+}
+
+sub MakeBags() {
+    while ( defined($_=<>) ) {
+	chomp();
+	&links::File::tabletext(\&table,$_);
+    }
+    #   now print the constructed record
+    print ($#feats+1);
+    for (my $k=0; $k<=$#feats; $k++ ) {
+	print " $featmap{$feats[$k]}";
+    }
+    print "\n";
+}
+
+#################################################################
+#
+#  Load routines
+#
+#################################################################
+
+#      $doccount, $featcount
+#      %featmap  (hashcode to feature number map)
+sub LoadTables() {
+  open(FEATS,"<$stem.words");
+  binmode FEATS, ":utf8";
+  #  load up the mappings, precomputed
+  %featmap = ();
+  $featcount = 0;
+  while ( defined($_=<FEATS>) ) {
+    chomp();
+    my @a = split();
+    $featmap{$a[2]} = $a[0];
+    if ( $a[1] eq "doc" ) {
+	$docfeat{$a[2]} = 1;
+    }
+    if ( $a[1] eq "stop" ) {
+	if ( defined($a[6]) ) {
+	    die "Stop-word in '$stem.words' has spaces!\n";
+	}
+	$links::File::stops{$a[5]} = 1;
+    }
+    $featcount ++;
+  }
+  close(FEATS);
+
+  print STDERR "Loading feature map, size = " . %featmap . ".\n";
+  if ( %links::File::stops ) {
+      print STDERR "Loading stop list, size = " . %links::File::stops . ".\n";
+  }
+  print STDERR "Loaded $stem with $featcount features\n";
+
+}
+  
+#################################################################
+#
+#  Run
+#
+#################################################################
+
+GetOptions(
+    'man'       => sub {pod2usage(-exitstatus => 0, -verbose => 2)},
+    'h|help'       => sub {pod2usage(1)}
+);
+
+pod2usage(-message => "ERROR: need stem")
+      if ( $#ARGV != 0 );
+
+$stem = shift();
+
+open(TPC,"<$stem.tpc");
+while ( defined($_=<TPC>) ) {
+    chomp();
+    my $t = substr($_,0,1);
+    $type{$t} = substr($_,2);
+    $typerev{substr($_,2)} = $t;
+}
+close(TPC);
+
+&LoadTables();
+
+&MakeBags(); 
+
+exit 0;
+
+__END__
+
+=head1 NAME
+    
+linkText - skeletal version of 
+I<linkBags> to process text and turn into a bag.
+
+=head1 SYNOPSIS
+    
+linkText [options] STEM < TEXT
+
+Options:
+
+    STEM                Stem for standard LinkTables files, several extensions.
+    -h, --help          display help message and exit.
+     --man              print man page and exit.
+
+=head1 DESCRIPTION
+
+Generate a line similar to a standard line for a document for the
+default output of
+I<linkBags>.
+Needs a fully prepared set of dictionaries and such from a
+previous run of
+I<linkTables>.
+Features are offset by zero.
+Input from
+F<stdin>.
+Output goes to 
+F<stdout>.
+
+This is useful just to see what text gets converted into, or to generate queries
+from text.
+
+=head1 SEE ALSO
+
+I<linkBags>(1). 
+
+text-bags is in 
+F<http://github.com>
+
+=head1 AUTHOR
+
+Wray Buntine
+
+=head1 COPYRIGHT AND LICENSE
+
+Copyright (C) 2013 Wray Buntine
+
+This library is free software; you can redistribute it and/or modify
+it under the same terms as Perl itself, either Perl version 5.8.4 or,
+at your option, any later version of Perl 5 you may have available.
+
+=cut

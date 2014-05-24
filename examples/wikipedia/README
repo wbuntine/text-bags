@@ -1,0 +1,55 @@
+The Freebase Wikipedia Extraction (WEX) is no longer supported!
+If you can find these files somewhere, then you can use this routine.
+Otherwise you are out of luck!
+
+This example demonstrates the use of the "wex2link" Perl script
+to process text/XML data for input to linkBags.
+
+The Freebase Wikipedia Extraction (WEX) is a processed dump of the
+English language Wikipedia, provided free of charge for any
+purpose with regular updates by Metaweb Technologies.  See
+	  http://download.freebase.com/wex
+Unfortunately this has ceased to be supported!
+
+To see the formats a wee demo is included here.
+We steal the input file from the test directory, "../../t/".
+The file is good enough to inspect the I/O formats, but not good
+enough to do any testing on topic models.  So get some of the
+full download for this.
+Note the WEX folks fool around with this format frequently, so do not
+expect this to be stable.
+
+  # generate the input for the linkBags suite
+  #  switch on --params to see template names and parameters
+  zcat ../../t/wex.gz | wex2link --params > wx.links
+
+  # process with the linkBags suite
+  linkTables --titletext wx.links wx
+  linkBags wx.links wx
+
+Inspect the file "wx.links" to see the kind of input that
+linkBags system expects, and the type of tokens recorded by the
+processing.
+
+The articles section of WEX, something like:
+          freebase-wex-2009-06-16-articles.tsv.bz2
+contains the 4 million or so articles in XML format carefully
+formatted.  The Perl program "wex2link" in text-bags illustrates
+how to process these formats and create suitable input for linkBags.
+
+The following command generate bags from WEX into the "wx" stem
+in batches of 100,000 records.
+
+   bzcat freebase-wex-2009-06-16-articles.tsv.bz2 | \
+          wex2link --file=wx.links --batch=100000
+
+This will take a day!  Now process these using linkTables, etc. 
+   cat wx.links.* | bzip2 > wx.links.bz2
+   linkTables --titletext --stopfile stops --mincount 30 wx.links wx
+   linkBags --titletext wx.links wx
+
+Each of these also take an afternoon, and many gigabytes of spare space.
+e.g., the sort done inside "linkTables" requires many gigabytes in /tmp
+NB.   this is also easily parallelised, but this has not been done.
+
+

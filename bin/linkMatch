@@ -1,0 +1,166 @@
+#!/usr/bin/perl -w
+
+use strict;
+use Getopt::Long;
+use Pod::Usage;
+use POSIX;
+use Encode;
+use links::URLs;
+use links::File;
+use IO::Handle; 
+use Lingua::Stem;
+
+###################### CONFIGURATION #####################
+
+#  ensure sort handles UTF8 order
+my $SORTCODE = "LC_ALL=en_US.UTF-8; export LC_ALL;" ;
+
+############ END CONFIGURATION ######################
+
+#  autoflush
+select((select(STDERR), $| = 1)[0]);
+
+# encoding pragmas follow any includes like "use"
+use encoding 'utf8';
+use open ':utf8';
+binmode STDIN, ":utf8";
+binmode STDERR, ":utf8";
+
+my $file = "";
+my $match = "";
+my %metaexp;
+my $metaexp;            # command line string
+my $metas = 0;
+
+#################################################################
+#
+#  Build routines
+#
+#################################################################
+
+sub MatchBags() {
+    my $doc = 0;
+  while ( defined($_=<IN>) ) {
+    if ( /^D ([^ ]*) ([^ ]*) (.*)$/ ) {
+      my $content = "$_";
+      my $mc = $3;
+      my $keymatch = 0;
+      #   now process links
+      for ( $_=<IN>; $_ ne "EOD\n" && $_ ne "EOL\n";
+	    $_=<IN> ) {
+	  $content .= $_;
+	  if ( /^text (.*)$/ ) {
+	      $mc .= " $1 ";
+	  } 
+      }
+      $content .= $_;
+      if ( $_ eq "EOL\n" ) {
+	#   now process tokens
+	for ( $_=<IN>; $_ ne "EOD\n";
+	      $_=<IN> ) {
+	    $content .= $_;
+	    if ( /^text (.*)$/ ) {
+	      $mc .= " $1 ";
+	    } else {
+		my ($k,$t) = ($_ =~ /^([^ ]*)? (.*)$/);
+		# print STDERR "Testing key $k ... $t\n";
+		if ( defined($metaexp{$k}) ) {
+		    if ( $t =~ /$metaexp{$k}/ ) {
+			$keymatch++;
+		    }
+		}
+	    }
+	}
+	$content .= $_;
+      }
+      $mc =~ s/[!-,\.\/:-@\{\}\|~\[-_\`]+/ /g;
+      $mc =~ s/\s+/ /;
+      #   now print the constructed record
+      if ( $keymatch==$metas && $mc =~ /$match/ ) {
+	  print $content;
+      }
+    }
+  }
+}
+
+#################################################################
+#
+#  Run
+#
+#################################################################
+
+GetOptions(
+    'meta=s'      => sub { if ( $_[1] =~ /^(.*,)?(.*)$/ ) {
+	                     my $k = $1;  my $t = $2;  $k =~ s/,$//;
+			     $metaexp{$k} = $t;
+			     print STDERR "Matching key '$k' with '$t'\n";
+			     $metas++;
+			   } },
+     'man'       => sub {pod2usage(-exitstatus => 0, -verbose => 2)},
+      'h|help'       => sub {pod2usage(1)}
+);
+
+pod2usage(-message => "ERROR: need input file and match string")
+      if ( $#ARGV != 1 );
+
+$file = shift();
+$match = shift();
+
+if ( defined($metaexp) ) {
+    if ( $metaexp =~ /^(.*,)?(.*)$/ ) {
+	# print STDERR "$1 ..... $2\n";
+	my $k = $1;
+	my $t = $2;
+	$k =~ s/,$//;
+	$metaexp{$k} = $t;
+	print STDERR "Matching key '$k' with '$t'\n";
+    }
+}
+print STDERR "Matching text with '$match'\n";
+
+&links::File::openzip(\*IN,$file,"linkdata");
+&MatchBags(); 
+close(IN); 
+
+exit 0;
+
+__END__
+
+=head1 NAME
+    
+linkMatch - test a search string on the link file to filter records
+
+=head1 SYNOPSIS
+    
+linkMatch LINK-FILE REGEXP
+
+Options:
+
+    LINK-FILE           Filename for input link file usually created by XSL.
+    REGEXP              Perl reg-expression to match against text
+    --meta key,reg-exp   Perl reg-expression to match against meta data for key
+    -h, --help          display help message and exit.
+     --man              print man page and exit.
+
+=head1 DESCRIPTION
+
+=head1 SEE ALSO
+
+I<linkTables>(1).
+
+text-bags is in 
+F<http://github.com>
+
+=head1 AUTHOR
+
+Wray Buntine
+
+=head1 COPYRIGHT AND LICENSE
+
+Copyright (C) 2010 Wray Buntine
+
+This library is free software; you can redistribute it and/or modify
+it under the same terms as Perl itself, either Perl version 5.8.4 or,
+at your option, any later version of Perl 5 you may have available.
+
+=cut

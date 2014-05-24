@@ -1,0 +1,212 @@
+#!/usr/bin/perl -w
+
+use strict;
+use utf8;
+use POSIX;
+use HTML::Entities;
+use links::URLs;
+use links::File;
+use Getopt::Long;
+use Pod::Usage;
+use Lingua::Stem;
+use FileHandle;
+           
+# encoding pragmas follow any includes like "use"
+use open ':utf8';
+binmode STDIN, ":utf8";
+binmode STDERR, ":utf8";
+
+my $dictsize = 0;
+my $docno = 0;
+
+#  check options
+
+GetOptions(
+    'man'      => sub {pod2usage(-exitstatus => 0, -verbose => 2)},
+    'h|help'       => sub {pod2usage(1)},
+    'v|verbose' => \$links::File::verbose,
+);
+
+pod2usage(-message => "ERROR: need input file and stem")
+      if ( $#ARGV != 1 );
+
+my $file = shift();
+my $stem = shift();
+
+&links::File::loadpars($stem);
+
+#  Load up symbol table info.
+#      %featmap  (hashcode to feature number map)
+my   %featmap = ();
+my   @featcnt = ();
+my   @feattype = ();
+sub LoadTables() {
+  open(FEATS,"<$stem.words") or die "Cannot open input '$stem.words': $!";
+  binmode FEATS, ":utf8";
+  #  load up the mappings, precomputed
+  while ( defined($_=<FEATS>) ) {
+    chomp();
+    my @a = split();
+    if ( $a[1] eq "text" ) { 
+	$featmap{$a[2]} = $a[0];
+    } else {
+	#   fill in dummy value for non text for printing
+	$featcnt[$a[0]] = 1;
+	$feattype[$a[0]] = join(" ",@a[5..$#a]);
+    }
+  }
+  close(FEATS);
+}
+
+# hash code used elsewhere
+sub tablehash() {
+    my $text = $_[0];
+    #  this is the secret code for 'text' from linkTables
+    my $tpc = "b";
+    my $h = &links::URLs::easyhash64char("$tpc$text");
+    # print "text '$text' $h\n";
+    return $h;
+}
+
+# add entries to the text 
+sub tabletext() {
+    my $OKs = 0;
+    my @tvec= ();
+    my $tw = &links::File::cleanpunct($_[0]);
+    my $nc = $links::File::nolcase;
+    $links::File::nolcase = 1;
+    my $tw2 = &links::File::cleanpunct($_[0]);
+    $links::File::nolcase = $nc;
+    # print "TT: $tw\n";
+    #  lower case by default, build vector of feature indices
+    my $sp = &links::File::tokenise($tw);
+    my $sp2 = &links::File::tokenise($tw2);
+    if ( scalar @{$sp} != scalar @{$sp2} ){
+	print STDERR "Texts different length ...\n TEXT-1: " .
+	    join(" ",@{$sp}) . "\n TEXT-2: " .
+	    join(" ",@{$sp2});
+	exit(1);
+    }
+    for (my $k=$#{$sp}; $k>=0; $k--) {
+	my $kk = $featmap{&tablehash($sp->[$k])};
+	if ( !defined($kk) ) {
+	    $kk = -1;
+	} else {
+	    print "Checking $kk " . $sp->[$k] . " " . $sp2->[$k] . "\n";
+	    $featcnt[$kk]++;
+	    if ( $featcnt[$kk]==1 ) {
+		$feattype[$kk] = "$sp2->[$k]";
+	    } elsif ( $featcnt[$kk]<=20 ) {
+		$feattype[$kk] .= " $sp2->[$k]";
+	    }
+	}
+    }
+}
+
+#  this is the standard input parsing skeleton
+&LoadTables();
+&links::File::openzip(\*I,$file,"linkdata");
+while ( defined($_=<I>) ) {
+  chomp();
+  if ( /^D ([^ ]*) ([^ ]*) (.*)$/ ) {
+      $docno++;
+      if ( $links::File::titletext ) {
+	  &tabletext($3);
+      }
+      #   now process links
+      for ( $_=<I>,chomp(); $_ && $_ ne "EOD" && $_ ne "EOL";
+	    $_=<I>,chomp() ) {
+	  if ( $links::File::linktext && /^([^ ]+) (.*)$/ ) {
+	      &tabletext($2);
+	  }
+      }
+      if ( $_ eq "EOL" ) {
+	  #   now process tokens
+	  for ( $_=<I>,chomp(); $_ && $_ ne "EOD";
+		$_=<I>,chomp() ) {
+	      if ( /^text (.*)$/ ) {
+		  &tabletext($1);
+	      }
+	  }
+      }
+  } elsif ( /^D / ) {
+      print STDERR "Unmatched document entry: (($_))\n";
+  }
+}
+close(I);
+
+print STDERR "Got " . ($#feattype + 1) . " tokens\n";
+
+for (my $i=0; $i<=$#feattype; $i++) {
+    if ( !defined($feattype[$i]) ) {
+	print STDERR "No types found for $i\n";
+	next;
+    }
+    if ( $featcnt[$i]==1 ) {
+	print $feattype[$i] . "\n";
+	next;
+    }
+    my %set = ();
+    #  count occurences
+    foreach $a ( split(/ /,$feattype[$i]) ) {
+	if ( defined($set{$a}) ) {
+	    $set{$a}++;
+	} else {
+	    $set{$a} = 1;
+	}
+    }
+    # sort by counts
+    my @sset = sort { $set{$b} <=> $set{$a} } keys %set;
+    # print "$i $sset[0] " . $set{$sset[0]} . " :: " . $feattype[$i] . "\n";
+    print "$sset[0]\n";
+}
+
+__END__
+
+=head1 NAME
+  
+linkTokens - find most common text form for each token, as already processed with
+I<linkTables>.   Thus loads the file STEM.words to get the symbol table
+and STEM.srcpar to carry over configuration used.
+This is an inefficient but safe implementation.
+
+=head1 SYNOPSIS
+    
+linkTokens [options] LINK-FILE STEM
+
+Options:
+
+    LINK-FILE        Filename for input links file.
+    STEM             Stem for output file, a ".tokens2" file output.
+    -h, --help       display help message and exit.
+     --man           print man page and exit.
+
+=head1 DESCRIPTION
+
+Input file of links and tags is assumed to be in UTF-8 encoding
+in the format given in I<linkTables>(1).
+
+Output file in form STEM.tokens.
+
+=head1 SEE ALSO
+
+I<links::URLs>(3), 
+I<links::File>(3), 
+I<linkTables>(1).
+
+text-bags is in 
+F<http://github.com>
+
+=head1 AUTHOR
+
+Wray Buntine
+
+=head1 COPYRIGHT AND LICENSE
+
+Copyright (C) 2014 Wray Buntine
+
+This library is free software; you can redistribute it and/or modify
+it under the same terms as Perl itself, either Perl version 5.8.4 or,
+at your option, any later version of Perl 5 you may have available.
+
+=cut

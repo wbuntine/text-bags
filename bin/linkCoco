@@ -1,0 +1,350 @@
+#!/usr/bin/perl -w
+
+use strict;
+use utf8;
+use POSIX;
+use HTML::Entities;
+use links::URLs;
+use links::File;
+use Getopt::Long;
+use Pod::Usage;
+use Lingua::Stem;
+use FileHandle;
+           
+# encoding pragmas follow any includes like "use"
+use encoding 'utf8';
+use open ':utf8';
+binmode STDIN, ":utf8";
+binmode STDERR, ":utf8";
+
+my $WINDOW = 20;
+my $MINCOUNT = 5;
+my $DICTSIZE = 3000000;
+my $suffix = "cooc";
+
+#  pairs data stored one side
+#   i.e.,  "k1#@#k2"  for k2<=k1
+my %pairscnt = ();
+#  since we drop stuff not in STEM.words, keep separate normaliser
+my @singlecnt = ();
+my @singlewin = ();
+#  total tokens, including unknown words
+my $fullcount = 0;
+#  total windows (less than above)
+#    e.g. if text has 10 tokens, its only one window
+my $windowcount = 0;
+my $dictsize = 0;
+my $docno = 0;
+
+#  check options
+
+GetOptions(
+      'mincount=i' => \$MINCOUNT,
+      'dictsize=i' => \$DICTSIZE,
+      'man'      => sub {pod2usage(-exitstatus => 0, -verbose => 2)},
+      'h|help'       => sub {pod2usage(1)},
+      'v|verbose' => \$links::File::verbose,
+      'window=i' => \$WINDOW,
+);
+
+pod2usage(-message => "ERROR: need input file and stem")
+      if ( $#ARGV != 1 );
+
+my $file = shift();
+my $stem = shift();
+
+&links::File::loadpars($stem);
+
+#  Load up symbol table info.
+#      %featmap  (hashcode to feature number map)
+my   %featmap = ();
+sub LoadTables() {
+  open(FEATS,"<$stem.words") or die "Cannot open input '$stem.words': $!";
+  binmode FEATS, ":utf8";
+  #  load up the mappings, precomputed
+  while ( defined($_=<FEATS>) ) {
+    chomp();
+    my @a = split();
+    if ( $a[1] eq "text" && $a[3]>=$MINCOUNT ) { 
+	$featmap{$a[2]} = $a[0];
+    }
+  }
+  close(FEATS);
+}
+
+# hash code used elsewhere
+sub tablehash() {
+    my $text = $_[0];
+    #  this is the secret code for 'text' from linkTables
+    my $tpc = "b";
+    my $h = &links::URLs::easyhash64char("$tpc$text");
+    # print "text '$text' $h\n";
+    return $h;
+}
+
+sub dumppairs() {
+    open(TMPD,">>$stem.$suffix.tmp");
+    foreach my $t ( keys(%pairscnt) ) {
+	$t =~ /^(.*)#@#(.*)$/;
+	    my $k1 = $1;
+	my $k2 = $2; 
+	print TMPD "$k1 $k2 $pairscnt{$t}\n";
+    }
+    close(TMPD);
+    print STDERR "Dumped $dictsize pairs, upto $docno-th doc\n";
+    %pairscnt = ();
+}
+
+# add entries to the text 
+sub tabletext() {
+    my $OKs = 0;
+    my @tvec= ();
+    my $tw = &links::File::cleanpunct($_[0]);
+    # print "TT: $tw\n";
+    #  lower case by default, build vector of feature indices
+    my $sp = &links::File::tokenise($tw);
+    foreach my $k ( @$sp ) {
+	my $kk = $featmap{&tablehash($k)};
+	if ( !defined($kk) ) {
+	    $kk = -1;
+	} else {
+	    $OKs ++;
+	}
+	push(@tvec, $kk);
+    }
+    if ( $OKs == 0 ) {
+	return;
+    }
+    my %windowhash = ();
+    $fullcount += ($#tvec + 1);
+    if ( $#tvec - $WINDOW < 1 ) {
+	$windowcount ++;
+    } else {
+    	$windowcount += $#tvec - $WINDOW;
+    }
+    for (my $i=0; $i<=$#tvec; $i++) {
+	my $k = $tvec[$i];
+	if ( $k>=0 ) {
+	    $singlecnt[$k]++;
+	    $windowhash{$k}++;
+	}
+	if ( $i>=$WINDOW ) {
+	    #  remove entry at start of window
+	    $k = $tvec[$i-$WINDOW];
+	    if ( $k>=0 ) {
+		$windowhash{$k}--;
+		if ( $windowhash{$k}==0 ) {  delete $windowhash{$k}; }
+	    }
+	}
+	if ( $i>=$WINDOW-1 || $i==$#tvec ) {
+	    #   we have a window ending in posn $i
+	    # print STDERR "$i: " . join(" ",keys %windowhash) . "\n";
+	    foreach my $k1 ( keys %windowhash ) {
+		$singlewin[$k1]++;
+		foreach my $k2 ( keys %windowhash ) {
+		    #   only store pair once
+		    if ( $k1 > $k2 ) {
+			my $ind = "$k1#@#$k2";
+			if ( !defined($pairscnt{$ind}) ) {
+			    $dictsize++;
+			}
+			$pairscnt{$ind}++;
+		    }
+		}
+	    }
+	}
+    }
+
+    if ( $dictsize>$DICTSIZE ) {
+	&dumppairs();
+	$dictsize = 0;
+    }
+}
+
+#  this is the standard input parsing skeleton
+&LoadTables();
+&links::File::openzip(\*I,$file,"linkdata");
+while ( defined($_=<I>) ) {
+  chomp();
+  if ( /^D ([^ ]*) ([^ ]*) (.*)$/ ) {
+      $docno++;
+      if ( $links::File::titletext ) {
+	  &tabletext($3);
+      }
+      #   now process links
+      for ( $_=<I>,chomp(); $_ && $_ ne "EOD" && $_ ne "EOL";
+	    $_=<I>,chomp() ) {
+	  if ( $links::File::linktext && /^([^ ]+) (.*)$/ ) {
+	      &tabletext($2);
+	  }
+      }
+      if ( $_ eq "EOL" ) {
+	  #   now process tokens
+	  for ( $_=<I>,chomp(); $_ && $_ ne "EOD";
+		$_=<I>,chomp() ) {
+	      if ( /^text (.*)$/ ) {
+		  &tabletext($1);
+	      }
+	  }
+      }
+  } elsif ( /^D / ) {
+      print STDERR "Unmatched document entry: (($_))\n";
+  }
+}
+close(I);
+if ( $dictsize>0 ) {
+    &dumppairs();
+}
+
+
+#  now collect pairs
+open(TMP,"sort -S50M -k1n -k2n $stem.$suffix.tmp |");
+open(P,"> $stem.$suffix");
+print P "-1 -1 $fullcount $windowcount\n";
+close(P);
+
+open(P,"| sort -S50M -k1n -k2n >> $stem.$suffix");
+
+#  also dump the totals count into same place so they get sorted
+for (my $k=0; $k<=$#singlecnt; $k++) {
+    if ( defined($singlecnt[$k]) ) {
+	print P "$k -1 $singlecnt[$k] $singlewin[$k]\n";
+    }
+}
+
+my $lastpair = "";
+my $lastcnt = 0;
+#  some stats
+my $dstotcnt = 0;
+my $dspc = 0;
+my $totcnt = 0;
+my $pc = 0;
+while ( defined($_=<TMP>) ) {
+    if ( /^([^ ]+ [^ ]+) ([0-9\.]+)$/ ) {
+	if ( $1 eq $lastpair) {
+	    $lastcnt += $2;
+	} else {
+	    my $s1 = $1;
+	    my $s2 = $2;
+	    if ( $lastcnt>0 ) {
+		if ( $lastcnt>=$MINCOUNT ) {
+		    print P "$lastpair $lastcnt\n";
+		    if ( $lastpair =~ /^([^ ]+) ([^ ]+)$/ && $1!=$2 && $2>=0 ) {
+			#  print other side of the pair so full matrix printed
+			print P "$2 $1 $lastcnt\n";
+		    }
+		    $totcnt += $lastcnt;
+		    $pc ++;
+		} else {
+		    $dstotcnt += $lastcnt;
+		    $dspc ++;		    
+		}
+	    }
+	    $lastcnt = $s2;
+	    $lastpair = $s1;
+	}
+    } else {
+	print STDERR "Bad line in '$stem.$suffix.tmp': $_\n";
+	exit(1);
+    }
+}
+if ( $lastcnt>0 ) {
+    if ( $lastcnt>=$MINCOUNT ) {
+	print P "$lastpair $lastcnt\n";		
+	$totcnt += $lastcnt;
+	$pc ++;
+    } else {
+	$dstotcnt += $lastcnt;
+	$dspc ++;		    
+    }
+}
+close(TMP);
+unlink("$stem.$suffix.tmp");
+close(P);
+if ( $pc==0 ) {
+    die "Found 0 pairs, quitting\n";
+}
+$totcnt /= $pc;
+print STDERR "Total of $pc pairs printed with average count $totcnt\n";
+if ( $dspc>0 ) {
+    $dstotcnt /= $dspc;
+    print STDERR "         $dspc pairs dropped with average count $dstotcnt\n";
+}
+
+__END__
+
+=head1 NAME
+  
+linkCoco - build co-occurence data for text, as already processed with
+I<linkTables>.   Thus loads the file STEM.words to get the symbol table
+and STEM.srcpar to carry over configuration used.
+This is an inefficient but safe implementation, dumping pairs to disk and then sorting.  
+
+The indices are printed, and a total line is printed too,
+with second index "-1",
+   -1 -1 616012 608358
+   0 -1 6160 5967
+   0 1 813
+   0 2 1485
+   ...
+
+This means there are 616012 tokens, including unknown ones
+not in the dictionary.
+And there are 608358 different windows, less than the number of tokens.
+The word with index 0 occurs 6160 times but only occurs (at least once)
+in 5967 windows.
+The word with index 0 co-occurs with the word with index 1
+813 times.  That means, looking at all 608358 windows,
+813 of them have both words 0 and 1 in them,
+possibly occuring more than once but this is not double counted.
+They may
+have two instances of 0 in a window along with 3 instances of
+1, but this still just counts as
+"a co-occurence happens" for the window.
+
+=head1 SYNOPSIS
+    
+linkCoco [options] LINK-FILE STEM
+
+Options:
+
+    LINK-FILE        Filename for input links file.
+    STEM             Stem for output file, several extensions done.
+    --dictsize D     Keep this many entries in dictionary before saving to tmp.
+    --mincount M     Ignore words with fewer occurences.
+    --window W       use window size W, default is 20
+    -h, --help       display help message and exit.
+     --man           print man page and exit.
+
+=head1 DESCRIPTION
+
+Input file of links and tags is assumed to be in UTF-8 encoding
+in the format given in I<linkTables>(1).
+
+Output file in form STEM.coco, which has lines with "hashA hashB count".
+The hash codes should be looked up in STEM.words file 
+created by I<linkTables>(1).  Note the 
+
+=head1 SEE ALSO
+
+I<links::URLs>(3), 
+I<links::File>(3), 
+I<linkRedir>(1), 
+I<linkTables>(1).
+
+text-bags is in 
+F<http://github.com>
+
+=head1 AUTHOR
+
+Wray Buntine
+
+=head1 COPYRIGHT AND LICENSE
+
+Copyright (C) 2011 Wray Buntine
+
+This library is free software; you can redistribute it and/or modify
+it under the same terms as Perl itself, either Perl version 5.8.4 or,
+at your option, any later version of Perl 5 you may have available.
+
+=cut

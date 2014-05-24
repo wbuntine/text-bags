@@ -1,0 +1,28 @@
+These examples show how you can use text-bags with PubMed Abstracts as
+obtained from U.S. National Library of Medicine. 
+
+PubMed files are in XML with DTDs and format descriptions at their
+website.   So an XSLT extractor is supplied here.
+This XSLT script is not extensively tested so may not
+work for unusual publication types.
+To create input for the linkBags suite, do something like this:
+	zcat medline09n0001.xml.gz | xsltproc medline.xsl - > mdl.links
+	zcat medline09n0002.xml.gz | xsltproc medline.xsl - >> mdl.links
+	...
+Probably best do in batches and concatenate the files.
+PubMed files are just the right size (30Mb) to run xsltproc on.
+
+Note there are a lot of PubMed abstracts, so you will have to select a subset
+you want to work with.
+	
+We proceed with the usual use of linkBags:
+
+#  prepare symbol tables in the file stem "mdl"
+#  using stopwords, and exclude tokens with less than 30 count
+linkTables --stopfile ../starthere/stops.txt --mincount 30 --stemming mdl.links mdl
+
+#  build bags in the stem mdl
+linkBags mdl.links mdl
+
+
+

@@ -1,0 +1,715 @@
+#!/usr/bin/perl -w
+
+use strict;
+use Getopt::Long;
+use Pod::Usage;
+use POSIX;
+use Encode;
+use links::File;
+use links::URLs;
+use HTML::Entities;
+use XML::Parser;
+# use MediaWiki::DumpFile::Pages;
+#  use this to split lines for sentences
+use Lingua::EN::Sentence qw( get_sentences  );
+
+my $MAXLENGTH=2000000;
+my $categorymatch = "";
+my $showparams = 0;
+my $splitsentences = 0;
+my $filestem = "";
+my $batches = 0;
+my $batch = 1;          #  current batch number
+my $inbatch = 0;        #  current count in batch
+my $punct = 0;
+my $WEX = 1;
+
+###################### CONFIGURATION #####################
+
+#   Note two very important aspects to the implementation.
+#   First, we set the character encoding properly to UTF8
+#   to correctly handle the character set.
+#   Second, the matches make use of the "non-greedy"
+#   option, "X*?" where the '?' says to do the minimum
+#   possible match.  Needed to properly match XML brackets.
+
+############ END CONFIGURATION ######################
+
+#  autoflush
+select((select(STDERR), $| = 1)[0]);
+
+# encoding pragmas follow any includes like "use"
+# the handles case where I/O is all UTF8, like Wikipedia
+use encoding 'utf8';
+use open ':utf8';
+binmode STDIN, ":utf8";
+binmode STDERR, ":utf8";
+
+&Lingua::EN::Sentence::add_acronyms( ("U.S", "D.C", "U.S.A", "pp") );
+
+print STDERR "Command line: " . join(" ", @ARGV) . "\n";
+
+GetOptions(
+    'batch=i'    => \$batches,
+    'startbatch=i'    => \$batch,
+    'file=s'     => \$filestem,
+    'cat=s'      => \$categorymatch,
+    'p|params!'   => \$showparams,
+    'sentences!'  => \$splitsentences,
+    'punct!'    => \$punct,
+    'wex!'     => \$WEX,
+    'man'       => sub {pod2usage(-exitstatus => 0, -verbose => 2)},
+    'h|help'       => sub {pod2usage(1)}
+);
+
+pod2usage(-message => "ERROR: no command line args")
+      if ( $#ARGV >=0 );
+
+my $parser= XML::Parser->new();
+$parser->setHandlers( Start => \&start_handler, 
+                      Char  => \&char_handler,
+                      End   => \&end_handler,
+                    );
+
+
+#############  locals for XML parser
+my @inparam = ();
+my $item = "";
+my $text;
+my $linktext = "";
+my $targettext = "";
+my $inlink = undef;
+my $intarget = undef;
+my $inref = 0;
+my $intargetlink = undef;
+my @intemplate = ();
+my @params = ();
+my @cats = ();
+my @templates = ();
+my $blocked = 0;
+my $xmltext = "";
+my $title;
+my $badlink = 0;
+my $textout = "";
+my $gotcat;
+my $result; 
+
+#   <extension>  ??
+my %linebreak = ("xhtml:br", 1, "xhtml:div", 1, "xhtml:span", 1, 
+		 "xhtml:center", 1, "xhtml:p", 1, "paragraph", 1,
+		 "heading", 1, "sentence", 1, 
+		 "preline", 1);
+my %blockelement = ("table", 1);
+
+###
+
+#  titles almost certainly referring to a year, decade, ...
+sub timename() {
+    $_ = $_[0];
+    if ( /^[1-2](?:[0-9]){3}$/i
+	|| /^[1-9](?:[0-9]){0,2}$/i
+	|| /^[1-9](?:[0-9]){0,3}(?: ad| bc)$/i
+	|| /^0s$/
+	|| /^(?:[0-9]){1,3}0s(?: ad| bc| bce|)(\s+\(decade\)|)$/i
+	|| /^(?:[0-9]){1,2}.{1,3} century(?: ad| bc| bce|)$/i
+	|| /^(?:[0-9]){1,2}.{1,3} millennium(?: ad| bc| bce|)$/i )
+    {
+	#  exact date
+	return 1;
+    }
+    return 0;
+}
+
+sub timerange() {
+    $_ = $_[0];
+    if ( / / && /(?:^| )((?:[0-9]){3,4})-((?:[0-9]){1,4})(?:$| )/ ) {
+	#  range of years
+	my $year = $1;
+	my $diff = $2;
+	if (   ( $year > 1200 )
+	       && ( $year < 2200 )
+	       && ( "$year-$diff" ne "1806-20" ) )
+	{
+	    
+	    #  test if its an OK range
+	    if (   ( ( length($diff) == 1 ) && ( $year =~ /(.)$/ ) )
+		   || ( ( length($diff) == 2 ) && ( $year =~ /(..)$/ ) )
+		   || ( ( length($diff) == 3 ) && ( $year =~ /(...)$/ ) )
+		   || ( ( length($diff) == 4 ) && ( $year =~ /(....)$/ ) ) )
+	    {
+		if (   ( ( $diff > $1 ) && ( ( $diff - $1 ) < 20 ) )
+		       || ( $diff eq "00" ) )
+		{
+		    return 1;
+		}
+	    }
+	}
+    }
+    return 0;
+}
+
+#   return non-zero if its a list
+#   built painstakingly from examples
+sub listname() {
+    $_ = $_[0];
+    if ( /^(A |An |The |All-time |)(Full |Complete |All-time |Chronological |Alphabetical |Ranked |Alphabetic |)list of/  ||
+	 /episode list/i    ||
+	 /wins list/i	 ||
+	 /win list/i	 ||
+	 /hill lists/i	 ||
+	 /product list/i  ||
+	 / cast list/i  ||
+	 /list of characters/i  ||
+	 /character list/i  ||
+	 / - list of/i  ||
+	 /exit list/i  ||
+	 /^lists of/i  ||
+	 (/^index /i && / articles/i) ||
+	 /^the list \(/i  ||
+                   /^cast list of/i ) {
+	return 1;
+    }  
+    return 0;
+}
+
+# remove illegal chars in URL, like " ", and remove the 
+# '#' tags
+sub cleanurl() {
+    my $url = $_[0];
+    if ( !defined($url) ) {
+	print STDERR "Got undefined URL for '$_[0]'\n";
+	return "";
+    }
+    if ( $url eq "" ) {
+	print STDERR "Got empty URL for '$_[0]'\n";
+	return "";
+    }
+     $url = &links::URLs::StandardURL($url);
+    if ( !defined($url) ) {
+	print STDERR "Got undefined cleaned URL for '$_[0]'\n";
+	return "";
+    }
+    $url =~ s/#.*//;
+    return $url;
+}
+
+# strip all punctation, turning into space
+sub cleanpunct() {
+    my $xml = $_[0];
+    $xml =~ s/[[:punct:][:space:]]+/ /g;
+    return $xml;
+}
+
+# separate on punctuation
+sub separatepunct() {
+    my $xml = $_[0];
+    $xml =~ s/([[:punct:]])([[:alnum:]])/$1 $2/g;
+    $xml =~ s/([[:alnum:]])([[:punct:]])/$1 $2/g;
+    return $xml;
+}
+sub separatebracket() {
+    my $xml = $_[0];
+    #print STDERR "SEPBRACK: $xml\n";
+    $xml =~ s/([\(\[\{<])([^ ])/$1 $2/g;
+    $xml =~ s/([^ ])([\)\]\}>])/$1 $2/g;
+    #print STDERR "AFTER SEPBRACK: $xml\n";
+    return $xml;
+}
+
+sub cleanlines() {
+    my $xml = $_[0];
+    $xml =~ s/^\s+//;
+    $xml =~ s/\s+$//;
+    $xml =~ s/\s+$//;
+    return $xml;
+}
+
+#   tries to get stuff that shouldn't be broken on punctuation
+sub special() {
+    my $ss = $_[0];
+    if ( $ss=~/^#[0-9]+$/  #  plain number
+	 || $ss=~/^\.[0-9]+$/    #  point
+	 || $ss=~/^[0-9]+\p{Dash}[0-9][\p{Dash}0-9]*$/    #  code
+	 || $ss=~/^\p{Currency_Symbol}+[0-9,]*[0-9](\.[0-9]+)?$/ #  money
+	 || $ss=~/^[0-9,]*[0-9](\.[0-9]+)?%$/  #  percent
+	 || $ss=~/^[-+]?[0-9,]*[0-9](\.[0-9]*)?\p{Dash}[-+]?[0-9,]*[0-9](\.[0-9]*)?$/ 
+	             # range 
+	) {
+	return 1;
+    }
+   if ( $ss=~/^[-+]?[0-9,]*[0-9](\.[0-9]+)?\p{IsAlpha}{0,3}$/  # floating point
+	|| $ss=~/^[A-Z0-9._%+-]+@[A-Z0-9.\-]+\.[A-Z]{2,4}$/i # email
+	|| $ss=~/^(?:(http|https|ftp):\/\/)[a-z0-9\-\.\/]+\.[a-z0-9]{2,4}(\/[a-z0-9\/#+=%&_\.~?\-]*)?$/i  # url
+	|| $ss=~/^[\p{IsAlpha}0-9\-\.]+\.[a-z]{2,4}$/i  # website
+	)  {
+	return 1;
+    }
+    return 0;
+}
+
+sub cleantext() {
+    my $xml = $_[0];
+    #  normalise spaces
+    $xml =~ s/\s+/ /g;
+    $xml =~ s/\s+$//;
+    $xml =~ s/^\s+//;
+    $xml =~ s/\n +\n/\n/g;
+    $xml =~ s/\n\n+/\n/g;
+    $xml =~ s/  +/ /g;
+    $xml =~ s/^ //mg;
+    $xml =~ s/ $//mg;
+    $xml =~ s/&amp;/&/g;
+    $xml = decode_entities($xml);
+    return $xml;
+}
+
+#  push text from $xmltext buffer onto $textout
+sub pushtext() {
+    my $trytext = &cleantext($xmltext);
+    if ( $trytext ne "" ) {
+	$textout .= "$trytext\n";
+	$xmltext = "";
+    }
+}
+
+#  XML handler
+sub start_handler()        # raises a flag when getting to Item
+{
+  my ($p, $elmt, %attr) = @_;
+  if ( $elmt eq 'space' ) {  
+      ;
+  } elsif ( $elmt eq 'param' ) {  
+      my $n = $attr{"name"};
+      $n =~ s/\t/ /g;
+      push(@inparam,$n);  
+      $item = "";
+  } elsif ( $elmt eq 'template' ) {  
+      my $n = $attr{"name"};
+      $n =~ s/\t/ /g;
+      push(@intemplate,$n);             # reset the item text
+  } elsif ( $elmt eq 'link' ) {  
+      if ( defined($inlink) ) {
+	  $badlink = 1;
+      }
+      if ( defined($attr{"href"}) ) {
+	  $inlink = $attr{"href"};
+      } elsif ( (defined($attr{"synthetic"}) && $attr{"synthetic"} eq "true") 
+		|| keys(%attr)==0 ) {
+	  $intargetlink = 1;
+      } else {
+	  foreach my $k ( keys %attr ) {
+	      print STDERR "UNKNOWN link $k $attr{$k}\n";
+	  }
+      }
+  } elsif ( $elmt eq 'target' && defined($intargetlink) ) {  
+      $targettext = "";
+      $intarget = 1;
+  } elsif ( $elmt eq 'part' && defined($intargetlink) ) {  
+      $inlink = "part";
+      $linktext = "";
+  } elsif ( $elmt eq "extension" && $attr{"extension_name"} eq "ref" ) {
+      $inref = 1;
+      &pushtext();
+  } elsif ( $blockelement{$elmt} ) {
+      $blocked++;
+  }
+} 
+
+#  XML handler
+sub char_handler           # stores the item text in $item
+{ 
+    my( $p, $text)= @_;
+    if ( @inparam>0 ) { 
+	# print STDERR "Inparam(". join(",",@inparam) . ")\n";
+	$item .= $text; 
+    }
+    if ( defined($intarget) ) { 
+	# print STDERR "Intarget $intarget\n";
+	$targettext .= $text; 
+    }
+    if ( defined($inlink) ) { 
+	# print STDERR "Inlink $inlink\n";
+	$linktext .= $text; 
+    }  
+    if ( @inparam==0 && @intemplate==0 && ( $inref || $blocked==0 )
+	 && !defined($intarget) && !defined($inlink) ) {
+	$xmltext .= $text;
+    } elsif ( $text !~ /^\s+$/ ) {
+	# print STDERR "Nothing:::  $text\n";
+    }
+}
+
+#  XML handler
+#   text is assembled in $textout with line breaks at all
+#   sentence end markers
+sub end_handler            # processes the item and lowers the flag
+{
+    my ($p, $elmt ) = @_;
+    if ( $elmt eq 'space' ) {  
+	$xmltext .= " ";
+    } elsif ( $elmt eq 'param' ) {  
+	if ( $item ne "" ) {
+	    $item =~ s/\s+/ /g;
+	    push(@params,join("/",@intemplate) . "//" .
+		 join("/",@inparam) . "\t$item");
+	    $item = "";
+	}
+	pop(@inparam);
+    } elsif ( $elmt eq 'template' ) {
+	push(@templates,join("/",@intemplate));
+	pop(@intemplate);
+    } elsif ( $elmt eq 'part' ) {  
+	$inlink = undef;
+    } elsif ( $elmt eq 'target' ) {  
+	$intarget = undef;
+    } elsif ( $elmt eq 'extension' ) {  
+	$inref = 0;
+    } elsif ( $elmt eq 'link' ) {  
+	#  here we recognise links (urls) and targets (internal links)
+	if ( defined($inlink) ) {
+	    if ( $inlink ne "" ) {
+		if ( @inparam==0 && @intemplate==0 && !$blocked ) {
+		    $xmltext .= $linktext;
+		} elsif ( $inref && $blocked ) {
+		    $xmltext = $linktext;
+		    &pushtext();
+		}
+		my $mu = &cleanurl($inlink);
+		if ( $mu ) {
+		    $result .= "$mu " . &tokenise($linktext) . "\n";
+		}
+	    }
+	} elsif ( defined($intargetlink) ) {
+	    if ( $linktext eq "" ) {
+		$linktext = $targettext;
+	    }
+	    if ( $targettext =~ /^Category:/i ) {
+		if ( $targettext =~ /^Category:(..*)/i ) {
+		    push(@cats,$1);
+		    if ( $categorymatch ne "" && $1 =~ /$categorymatch/i ) {
+			$gotcat = 1;
+		    }
+		}
+	    } elsif ( $targettext !~ /^File:/ && $targettext !~ /^Image:/  
+		      && $targettext !~ /^Template:/ 
+		      && $targettext !~ /^[[:alnum:]][[:alnum:]]:/ 
+		      && $targettext ne "" ) {
+		my $mu = &cleanurl($targettext);
+		if ( $mu ) {
+		    $result .= &cleanurl($targettext) . " " . 
+			&tokenise($linktext) . "\n";
+		}
+		if ( @inparam==0 && @intemplate==0 && !$blocked ) {
+		    $xmltext .= $linktext;
+		} elsif ( $inref && $blocked ) {
+		    $xmltext = $linktext;
+		    &pushtext();
+		}
+	    } 
+	    $intargetlink = undef;
+	    $targettext = "";
+	}
+	$inlink = undef;
+	$linktext = "";
+    } elsif ( $linebreak{$elmt} ) {
+	&pushtext();
+    } elsif ( $blockelement{$elmt} ) {
+	$blocked--;
+    }
+} 
+
+# tokenise text
+sub tokenise() {
+    my $xml = &cleantext($_[0]);
+    my $newxml = "";
+    foreach my $ss ( split(/(\s+)/,&separatebracket($xml)) ) {
+	if ( $ss =~ /^ +$/ ) {
+	    ;
+	} elsif ( &special($ss) ) {
+	    $newxml .= " $ss"; 
+	} elsif ( $ss =~ /^(.*)([,\.])$/ && &special($1) ) {
+	    $newxml .= " $1 $2"; 
+	} else {
+	    $newxml .= " " . &separatepunct($ss);
+	}
+    }
+    return $newxml;
+}
+
+sub initparse() {
+    @inparam = ();
+    $item = "";
+    $linktext = "";
+    $targettext = "";
+    $inlink = undef;
+    $intarget = undef;
+    $intargetlink = undef;
+    $xmltext = "";
+    @intemplate = ();
+    @params = ();
+    @cats = ();
+    @templates = ();
+    $blocked = 0;
+    $textout = "";
+}
+
+#  return any lines with more than 400 words
+#  or null
+my $recno = 0;
+my $keepline;
+sub checklengthprint() {
+    my @xt = split(/\n/,$_[0]);
+    foreach my $xl ( @xt ) {
+	if ( $xl !~ /^[[:punct:]]*$/ ) {
+	    my $sentences = [ $xl ];
+	    if ( $splitsentences ) {
+		$sentences=get_sentences($xl);
+		if ( !defined($sentences) ) {
+		    next;
+		}
+		if ( defined($sentences->[1]) ) {
+		    print STDERR "SPLIT:\n";
+		    my $lll=1;
+		    foreach my $x (@$sentences) {
+			print STDERR "  $lll :: $x\n";
+			$lll++;
+		    }
+		}
+	    } 
+	    foreach my $x (@$sentences) {
+		my $xcp = $x;
+		$xcp =~ s/[^A-Za-z0-9 \-\.,;:\'\"]//g;
+		#  check if too much foreign/strange stuff
+		if ( length($xcp) < 0.4 * length($x) ) {
+		    print BAD "$keepline $x\n";
+		} else {
+		    my @xs=split(/ /,$x);
+		    if ( $#xs>600 ) {
+			#  check for hanging tabular stuff
+			$x =~ s/\|{1,3}(?:[^\}\|]{1,150}\|{1,3}){20,}//g;
+			#  check for simple ":" separated lists
+			$x =~ s/:(?:[^:]{1,50}:){20,}//g;
+			@xs = split(/ /,$x);
+			if ( $#xs>600 ) {
+			    print BAD "$keepline $x\n";
+			} else {
+			    print "text $x\n";
+			}
+		    } else {
+			print "text $x\n";
+		    }
+		}
+	    }
+	}
+    }
+    return "";
+}
+
+sub checkbatchfile() {
+    if ( $inbatch >= $batches ) {
+	close(OUTFILE);
+	$batch++;
+	$inbatch = 0; 
+	open(OUTFILE,">$filestem.$batch");
+	binmode OUTFILE, ":utf8";
+	select OUTFILE;
+    }
+    $inbatch++;
+}
+
+sub processPage() {
+    my $url = shift();
+    my $tle = shift();
+    my $xml = shift();
+    $keepline = "$tle " . &links::URLs::easyhash64char("$tle");
+    my $hl = "D $keepline $url\n";
+    my $title = $url;
+    $gotcat = 0;
+    if ( $categorymatch eq "" ) {
+	$gotcat = 1;
+    }
+    #    we exclude those records in certain classes
+    if ( $xml =~ /^<\?xml / &&
+	 $title !~ /^File:/i &&
+	 $title !~ /^Template:/i &&
+	 $title !~ /^Category:/i &&
+	 #   lists
+	 &listname($title) == 0 &&
+	 #   disambiguation
+	 $xml !~ /<template name=\"disambig\">/ &&
+	 $title !~ /\(disambiguation\)/ &&
+	 #   timelines
+	 ! /timeline of/i &&
+	 ! /0s in / &&
+	 #   times
+	 &timename($title)==0  
+	) {
+
+	$result = $hl;
+	
+	my $cats = "";
+	&initparse();
+
+	$xml =~ s/\\n/\n/g;
+	$parser->parse($xml);
+	#  still may be some text left to grab
+	&pushtext();
+	if ( $gotcat == 0 ) {
+	    next;
+	}
+	if ( $filestem ne "" && $batches>0 ) {
+	    &checkbatchfile();
+	}	
+	print $result,"EOL\n";
+	for (my $i=0; $i<=$#cats; $i++) {
+	    print "category $cats[$i]\n"
+	}
+	if ( $showparams ) {
+	    for (my $i=0; $i<=$#templates; $i++) {
+		print "template $templates[$i]\n"
+	    }
+	    for (my $i=0; $i<=$#params; $i++) {
+		if ( $params[$i] =~ /^quote box\/\/quote\t/ ) {
+		    &printcleantext($params[$i]);
+		}
+		print "param $params[$i]\n"
+	    }
+	}
+
+	if ( $punct!=0 ) {
+	    $textout = &cleanpunct($textout);
+	}
+	&checklengthprint($textout);
+	print "EOD\n";    
+   }
+}
+
+if ( $filestem ne "" ) {
+    if ( $batches>0 ) {
+	$inbatch = 0; 
+	open(OUTFILE,">$filestem.$batch");
+    } else { 
+	open(OUTFILE,">$filestem");
+    }
+    binmode OUTFILE, ":utf8";
+    select OUTFILE;
+} elsif ( $batches>0 ) {
+    print STDERR "Cannot print batches if no --file\n";
+    exit(1);
+}
+
+open(BAD,">>wikiline.bad");
+#  autoflush
+# select((select(BAD), $| = 1)[0]);
+
+if ( $WEX ) {
+    while ( <> ) {
+	$recno++;
+	if ( length($_)>$MAXLENGTH ) {
+	    print STDERR "Dropping record $recno because over length.\n";
+	    next;
+	}
+	my @a = split(/\t/,$_);
+	my $xml = $a[3];
+	my $url = $a[1];
+	my $tle = &cleanurl($a[1]);
+	if ( ! defined($tle) ) {
+	    print STDERR "Bad title URL for $a[1]\n";
+	}
+	&processPage($url,$tle,$xml);
+    }
+} 
+if ( 0 ) {
+    #   WORK IN PROGRESS
+    #    so I can read the MediaWiki now, but cannot process it yet
+    my %opts = ( input=>\*STDIN, fast_mode => 1 );
+    my $pages = MediaWiki::DumpFile::Pages->new(\*STDIN);
+    my $page;
+    
+    while(defined($page = $pages->next)) {
+	my $tle = $page->title;
+	my $rev = $page->revision;
+	# next unless !$rev->redirect;
+	print $pages->base . " -- $tle -- " . "\n";
+    }
+}
+close(BAD);
+if ( $filestem ne "" ) {
+    close(OUTFILE);
+    if ( $batches>0 ) {
+	print STDERR "Printed $batch batches\n";
+    }
+}
+exit 0;
+
+__END__
+
+=head1 NAME
+    
+wex2link - convert WEX format Wikipedia articles to 
+I<linkTables>, format.
+
+=head1 SYNOPSIS
+    
+wex2link < WEXFILE
+
+Options:
+
+    --batch N           break output into sets of N docs
+    --cat               match string for category to print
+    --file              name of output file, default is stdout
+    -h, --help          display help message and exit.
+     --man              print man page and exit.
+    --params            include template and parameter details as own type
+    --sentences         apply (the very slow) sentence splitter to text input
+    --startbatch N      next batch number to use
+
+=head1 DESCRIPTION
+
+The Freebase Wikipedia Extraction (WEX) is a processed dump of the English language Wikipedia,
+provided free of charge for any purpose with regular updates by Metaweb Technologies.  They are no longer provided.
+See
+F<http://download.freebase.com/wex> .
+I<wex2link> converts records in the articles file of the WEX dump to the format expected by
+I<linkTables>(1).  
+
+Works as a filter, using standard input and output.  Has been
+written using an XML parser to digest the Wiki XML.  
+Tables, templates and parameters are dropped from the text, 
+but template names and parameters can be optionally recorded as
+different types.  Links inside tables, templates and parameters
+are recorded.
+
+The processing drops pages that are (1) disambiguation pages,
+(2) timelines, (3) times, (4) categories, (5) files (e.g., images),
+and (6) lists.  Recognition of these isn't foolproof, so
+some will be included, and some other pages will get wrongly
+excluded.
+
+Tokens in the pages are typed into the following
+(1) links (usually to other Wikipedia pages), (2) parameters (of templates), (3) template types,
+(4) categories, and of course (5) the page text.   Note link text is ignored.
+See 
+I<linkTables>(1) for format these are in. 
+
+=head1 SEE ALSO
+
+I<linkBags>(1), 
+I<linkTables>(1), 
+
+text-bags is in 
+F<http://github.com>
+
+=head1 AUTHOR
+
+Wray Buntine
+
+=head1 COPYRIGHT AND LICENSE
+
+Copyright (C) 2009-2012 Wray Buntine
+
+This library is free software; you can redistribute it and/or modify
+it under the same terms as Perl itself, either Perl version 5.8.4 or,
+at your option, any later version of Perl 5 you may have available.
+
+=cut

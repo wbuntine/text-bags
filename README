@@ -1,0 +1,113 @@
+text-bags version 0.7
+====================
+This is a module for preprocessing text collections
+to create dictionaries and bag/list files for use
+by topic modelling software.  Output is in various
+sparse vector formats (ldac, Matlab Topic Toolbox, libsvm, ...).
+Scripts are also given for extracting
+data from WEX files (Wikipedia dumps), PubMed XML and
+Reuters RCV1 files.  The input format is a simple text file
+with fielded entries for things like text, links and categories,
+in UTF-8. The format described in the linkTables man page.
+
+Examples are given in the examples/ directory.
+
+Installed system provides these scripts:
+	linkBags   linkCoCo   linkMatch linkParse linkTokens
+        linkRedir  linkSent   linkTables    wex2link linkText
+These do things like:
+     * sentence splitting (split paragraphs into sentences)
+     * running text on Sydney U's C&C parser (experimental)
+     * stemming, tokenisation
+     * dictionary filtering
+     * building a co-occurrence matrix for all the Wikipedia
+
+The system is implemented as a suite of Perl programmes.  If you
+do not already have Perl on your system, then you would have to have it
+installed via a pre-built package.   Perl does not mix as well with
+Windows, but excellent support exists for other systems.
+
+DEPENDENCIES
+============
+To install the text-bags suite first install the Perl prerequisities.
+To install prerequisities using Perl, first you run "cpan".  
+Basic instructions are given below, but if you encounter trouble see:
+     http://perl.about.com/od/packagesmodules/qt/perlcpan.htm
+for a guide on this.  You should have systems privileges to do this
+properly.  On Linux or MacOSX you do the same thing.
+If you have't run cpan before, then start it up once
+in command line mode to set the defaults:
+    sudo cpan
+Then run to do the installs of prereq packages.
+    sudo cpan install Digest::MD5 Encode FileHandle File::Tail 
+    sudo cpan install Getopt::Long HTML::Entities POSIX
+    sudo cpan install IO::Handle IO::Pipe Lingua::EN::Sentence
+    sudo cpan install Lingua::Stem Pod::Usage URI XML::Parser
+These are standard packages so all should go smoothly.
+
+INSTALLATION
+===========
+It is best to do the install in your own directory, 
+but then you need to set up your man path, library path, etc.,
+so these can be accessed.  You need something like:
+   PATH="$HOME/bin:$PATH"
+   PERLLIB=$HOME/share/perl/5.14.2
+   export PERLLIB
+added to your ".profile" under Linux/MacOSX.
+Add these carefully so as not to conflict with existing entries.
+Note the version number "5.14.2" is system independent.
+To see what version you have, type:
+   perl -V | tail
+and look at the library includes.
+
+On Linux or MacOSX you do the same thing to make and install.
+Type one of the following to initialise: 
+	# for an install in your own directory
+   	perl Makefile.PL PREFIX=$HOME
+OR 
+	# to install globally on the system
+	#    (which is harder to uninstall)
+   	perl Makefile.PL
+
+Then do the following two commands:
+   	make
+   	make test
+
+Now if the tests fail then you cannot proceed.
+Please email a copy of the error message to Wray Buntine.
+
+Then finally
+	#  to install locally, if you used 'PREFIX=$HOME'
+        make install
+OR
+	#  to install globally on the system
+	sudo make install
+
+To use C&C parsing option, which is experimental, install the parser
+from their website
+	http://svn.ask.it.usyd.edu.au/trac/candc/
+and define the environment variable CANDCHOME to be the root
+of the installation.  
+
+
+Getting Started
+===============
+Install the software.
+Then work through the example in examples/starthere/
+and the man pages do a basic job of describing options.
+Note the webpage
+       http://www.nicta.com.au/people/buntinew/softwareanddata
+should have links to some interesting datasets to try.
+
+linkParse does a parse but doesn't integrate anything
+back.   Note always run linkSent on the files first so C&C gets
+sentence-sized chunks to parse, not massive text blocks.
+
+
+COPYRIGHT AND LICENCE
+====================
+Copyright (C) 2005-2013 by Wray Buntine
+
+This library is free software; you can redistribute it and/or modify
+it under the same terms as Perl itself, either Perl version 5.8.4 or,
+at your option, any later version of Perl 5 you may have available.

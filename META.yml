@@ -1,0 +1,19 @@
+# http://module-build.sourceforge.net/META-spec.html
+#XXXXXXX This is a prototype!!!  It will change in the future!!! XXXXX#
+name:         text-bags
+version:      0.1
+version_from: lib/links/URLs.pm
+installdirs:  site
+requires:
+    Digest::MD5:                   0
+    Encode:                        0
+    Getopt::Long:                  0
+    HTML::Entities:                0
+    IO::Handle:                    0
+    Pod::Usage:                    0
+    POSIX:                         0
+    URI:                           0
+    Lingua::Stem		   0
+
+distribution_type: module
+generated_by: ExtUtils::MakeMaker version 6.17

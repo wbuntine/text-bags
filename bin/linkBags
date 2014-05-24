@@ -1,0 +1,1014 @@
+#!/usr/bin/perl -w
+
+use strict;
+use Getopt::Long;
+use Pod::Usage;
+use POSIX;
+use Encode;
+use links::URLs;
+use links::File;
+use IO::Handle; 
+use Lingua::Stem;
+
+###################### CONFIGURATION #####################
+
+#  ensure sort handles UTF8 order
+my $SORTCODE = "LC_ALL=en_US.UTF-8; export LC_ALL;" ;
+
+############ END CONFIGURATION ######################
+
+#  autoflush
+select((select(STDERR), $| = 1)[0]);
+
+# encoding pragmas follow any includes like "use"
+use open ':utf8';
+binmode STDIN, ":utf8";
+binmode STDERR, ":utf8";
+
+#  command line inputs 
+my $stemout = "";
+my $stem = "";
+my $file = "";
+#  output formats
+my $nobag = 0;
+my $witdit = 0;
+my $ldac = 0;
+my $sag = 0;     #  Mark Johnson's version of Steyvers and Griffiths streams
+my $matlab = 0;
+my $landu = 0;
+my $landuS = 0;
+my $stc = 0;
+my $libsvm = 0;
+my $dfdocs = 0;  #  read from .srcpar file
+my $ldacol = 0;  #  LDA-COL from Matlab Topic Modeling Toolbox
+my $coll = 0;    #  collocation output
+my $numbertopic = 0;
+my $append = 0;
+
+# shared vars
+my %topiccode = ("none", 0);
+my $topiccodecount = 0;
+my $doccount = 0;
+my $featcount = 0;
+my %featmap = ();        #  maps feature hash to feature index
+my %docfeat = ();        #  true if its a doc/internal link
+my %type = ();
+my %typerev = ();
+# my @token = ();
+my $docs = 0;
+my %idf = ();
+
+my @collcnt = ();
+
+# per bag data
+my %feats = ();
+my @feats = ();
+
+# per doc data used when batching for Lan Du format
+my $docnum = 0;
+my $paranum = 0;
+my $docbuf = "";
+my $parabuf = "";
+
+#  dims used only for $coll
+my $maxstop = 0;
+my $maxtext = 0;
+my $maxcoll = 0;
+
+#################################################################
+#
+#  Build routines
+#
+#################################################################
+
+my %textlike = ("text",1, "coll", 1, "stop", 1);
+#  ensure to make "link" entries dominate, they should never be
+#  dropped in favor of non-link entries;
+#  returns 1 if entered OK, otherwise 0
+sub table() {
+    my $tp = $_[0];
+    my $text = $_[1];
+    if ( $tp eq "endword" ) {
+	if ( $coll ) {
+	    push(@feats, "X");
+	}
+	return 0;
+    } elsif ( $coll!=0 && !defined($textlike{$tp}) ) {
+	#   needs to be fiddled so properly handles
+	#   non text with --coll, for now ignore
+	return 0;
+    }
+    my $tpc = $typerev{$tp};
+    if ( !defined($tpc) ) {
+	print STDERR "Typecode '$tp' unknown\n";
+	exit(1);
+    }
+    my $code = "$tpc$text";
+    my $h = &links::URLs::easyhash64char($code);
+    # print STDERR "table $coll: $tp -> $text; h=$h";
+    if ( $docfeat{$h} ) {
+	if ( $tp eq "link" ) {
+	    if ( $nobag ) {
+		push(@feats, $h);
+	    } else {
+		$feats{$h} ++;
+	    }
+	    return 1;
+	}
+    } elsif ( defined($featmap{$h}) ) { 
+	if ( $nobag ) {
+	    push(@feats, $h);
+	} else {
+	     $feats{$h} ++;
+	}
+	return 1;
+    } 
+    return 0;
+}
+
+#  Processors the file of links got through filehandle IN.
+#  Output bag to filehandle OUT.
+#  Output a bagged version to make it shorter, but its pretty
+#  complex.
+sub MakeBags() {
+    my $doc = 0;
+    my $sagtext = "";
+    while ( defined($_=<IN>) ) {
+	if ( $landuS && /^S / ) {
+	    if ( $doc>0 ) {
+		# print current buffer
+		print OUT "doc:$docnum\n";
+		print OUT $docbuf;
+		if ( $docnum==0 ) {
+		    print STDERR "$doc-th document was empty\n";
+		}
+	    }
+	    $docnum = 0;
+	    $paranum = 0;
+	    $docbuf = "";
+	    $parabuf = "";
+	}   
+	chomp();
+	if ( /^D ([^ ]*) ([^ ]*) (.*)$/ ) {
+	    $doc++;
+	    $paranum = 0;
+	    $parabuf = "";
+	    $sagtext = "";
+	    my $mytopic = "none";
+	    if ( $numbertopic ) {
+		$mytopic = $topiccode{$mytopic};
+	    }
+	    my $titles = $3;
+	    %feats = ();
+	    @feats = ();
+	    if ( $links::File::titletext ) {
+		my $got = &links::File::tabletext(\&table,$titles);
+		$sagtext .= $got;
+	    }
+	    #   now process links
+	    for ( $_=<IN>,chomp(); $_ ne "EOD" && $_ ne "EOL";
+		  $_=<IN>,chomp() ) {
+		my $link = $_;
+		$link =~ s/ .*//;
+		# print STDERR "LINK: $link $_\n";
+		$link = &links::URLs::StandardURL($link);
+		&table("link",$link);
+		if ( $links::File::linktext && /^([^ ]+) (.*)$/ ) {
+		    my $got = &links::File::tabletext(\&table,$2);
+		    $sagtext .= $got;
+		}
+	    }
+	    if ( $_ eq "EOL" ) {
+		#   now process tokens
+		for ( $_=<IN>,chomp(); $_ ne "EOD";
+		      $_=<IN>,chomp() ) {
+		    if ( /^([^ ]+) (.*)$/ ) {
+			if ( $1 eq "text" ) {
+			    my $got = &links::File::tabletext(\&table,$2);
+			    $sagtext .= $got;
+			} else {
+			    &table($1,$2);
+			}
+			if ( $1 eq "topic" ) {
+			    $mytopic = $2;
+			    $mytopic =~ s/^\s+//;
+			    $mytopic =~ s/\s.*//;
+			    if ( $mytopic eq "" ) {
+				$mytopic = "none";
+			    }
+			    if ( $numbertopic ) {
+				if ( !defined($topiccode{$mytopic}) ) {
+					$topiccode{$mytopic} = $topiccodecount+1;
+					$topiccodecount++;
+				}
+				$mytopic = $topiccode{$mytopic};
+			    }
+			}
+		    }
+		}
+	    }
+	    
+	    #   now print the constructed record
+	    if ( $landu ) {
+		for (my $k=0; $k<=$#feats; $k++ ) {
+		    $parabuf .= "word:" . ($featmap{$feats[$k]}) . "\n";
+		    $paranum ++;
+		}
+		if ( $paranum>0 ) {
+		    $docnum ++;
+		    $docbuf .= "para:$paranum\n" . $parabuf;
+		    # print STDERR "Doc $doc got $docnum pars, latest is size $paranum\n"
+		    if ( $landuS==0 ) {
+			print OUT "doc:1\n", $docbuf;
+			$docbuf = "";
+		    }
+		}
+	    } elsif ( $matlab ) {
+		print OUTD ($#feats+1);
+		for (my $k=0; $k<=$#feats; $k++ ) {
+		    print OUTD " " . ($featmap{$feats[$k]}+1);
+		}
+		print OUTD "\n";
+	    } elsif ( $witdit ) {
+		for (my $k=0; $k<=$#feats; $k++ ) {
+		    print OUTW ($featmap{$feats[$k]}+1) . "\n";
+		    print OUTD "$doc\n";
+		}
+	    } elsif ( $ldacol ) {
+		for (my $k=0; $k<=$#feats;  ) {
+		    my $l=0;
+		    if ( $feats[$k] eq "X" ) {
+			$k++;
+			$collcnt[$l]++;
+			next;
+		    }
+		    for ( ; $k+$l<=$#feats; $l++) {
+			if ( $feats[$k+$l] eq "X" ) {
+			    last;
+			}
+		    }
+		    print OUTD "$doc\n";
+		    if ( $l>1 ) {
+			print OUTS "1\n";
+		    } else {
+			print OUTS "0\n";
+		    }
+		    print OUTW ($featmap{$feats[$k]}+1) . "\n";
+		    $k += $l+1;
+		    $collcnt[$l]++;
+		}
+	    } elsif ( $coll ) {
+		# print STDERR "Making bag:\n" . join(" ",@feats) . "\n";
+		if ( $sag ) {
+		    $sagtext =~ s/^/_$doc/mg;
+		    print SOUT $sagtext;
+		}
+		my $n_feats = 0;
+		for (my $k=0; $k<=$#feats; $k++ ) {
+		    if ( $feats[$k] eq "X" ) {
+			$n_feats++;
+		    }
+		}
+		# print STDERR "feats=$n_feats\n";
+		print OUT $n_feats;
+		for (my $k=0; $k<=$#feats;  ) {
+		    my $l=0;
+		    for ( ; $k+$l<=$#feats; $l++) {
+			if ( $feats[$k+$l] eq "X" ) {
+			    last;
+			}
+		    }
+		    # print STDERR "$l ";
+		    print OUT " $l";
+		    for (my $l1=0; $l1<$l; $l1++) {
+			print OUT " $featmap{$feats[$k+$l1]}";
+		    }
+		    $k += $l+1;
+		    $collcnt[$l]++;
+		}
+		# print STDERR "\n";
+		print OUT "\n";		
+	    } elsif ( $nobag ) {
+		print OUT ($#feats+1);
+		for (my $k=0; $k<=$#feats; $k++ ) {
+		    print OUT " $featmap{$feats[$k]}";
+		}
+		print OUT "\n";
+	    } elsif ( $libsvm ) {
+		my $entries = 0;
+		print OUT "$mytopic";
+		foreach my $k ( sort { $featmap{$a} <=> $featmap{$b} } keys(%feats) ) {
+		    if ( $idf{$k}>0 ) {
+		        my $df = 1 + log($feats{$k});
+		        printf OUT " %d:%.5f",$featmap{$k}+1,$df*$idf{$k};
+		    }
+		}
+		print OUT "\n";
+	    } elsif ( $ldac ) {
+		my $entries = 0;
+		foreach my $k ( keys(%feats) ) {
+		    $entries++;
+		}
+		print OUT "$entries";
+		if ( $stc ) {
+		    print OUT " $mytopic";
+		}
+		foreach my $k ( sort { $featmap{$a} <=> $featmap{$b} } keys(%feats) ) {
+		    my $kk = $featmap{$k};
+		    print OUT " $kk:$feats{$k}";
+		}
+		print OUT "\n";
+	    } else {
+		my $entries = 0;
+		foreach my $k ( keys(%feats) ) {
+		    $entries++;
+		}
+		print OUT "$entries";
+		foreach my $k ( keys(%feats) ) {
+		    print OUT " $featmap{$k} $feats{$k}";
+		}
+		print OUT "\n";
+	    }
+	}
+    }
+    if ( $landuS ) {
+	print OUT "doc:$docnum\n";
+	print OUT $docbuf;
+    }
+}
+
+#################################################################
+#
+#  Load routines
+#
+#################################################################
+
+#      $doccount, $featcount
+#      %featmap  (hashcode to feature number map)
+sub LoadTables() {
+  open(FEATS,"<$stem.words");
+  binmode FEATS, ":utf8";
+  #  load up the mappings, precomputed
+  %featmap = ();
+  $featcount = 0;
+  while ( defined($_=<FEATS>) ) {
+    chomp();
+    my @a = split();
+    $featmap{$a[2]} = $a[0];
+    if ( $a[1] eq "doc" ) {
+	$docfeat{$a[2]} = 1;
+    }
+    if ( $a[1] eq "stop" ) {
+	if ( defined($a[6]) ) {
+	    die "Stop-word in '$stem.words' has spaces!\n";
+	}
+	$links::File::stops{$a[5]} = 1;
+    }
+    if ( $libsvm ) {
+	$idf{$a[2]} = $a[4];
+    }
+    $featcount ++;
+  }
+  close(FEATS);
+
+  print STDERR "Loading feature map, size = " . %featmap . ".\n";
+  print STDERR "Loading document map, size = " . %docfeat . ".\n";
+  if ( %links::File::stops ) {
+      print STDERR "Loading stop list, size = " . %links::File::stops . ".\n";
+  }
+  print STDERR "Loaded $stem with $doccount docs and $featcount features\n";
+
+  if ( $coll ) {
+      open(SRCPAR, "grep tags_long= $stem.srcpar |");
+      my $tags = <SRCPAR>;
+      close(SRCPAR);
+      chomp($tags);
+      $tags =~ s/^.*=//;
+      my @tags = split(/,/,$tags);
+      my %tags = ();
+      for (my $i=0; $i<=$#tags; $i++) {
+	  $tags{$tags[$i]} = ($i+1);
+      }
+      open(SRCPAR, "grep '^partition=' $stem.srcpar |");
+      my $part = <SRCPAR>;
+      close(SRCPAR);
+      chomp($part);
+      $part =~ s/^.*=//;
+      $part =~ s/\"//g;
+      my @part = split(/,/,$part);
+      if ( !defined($tags{"stop"}) ) {
+	  print STDERR "Found no 'stop' tag in '$stem.srcpar'\n";
+	  print STDERR "Needed to run linkTables with --collsize option\n";
+	  exit(1);
+      }
+      if ( !defined($tags{"text"}) ) {
+	  print STDERR "Found no 'text' tag in '$stem.srcpar'\n";
+	  print STDERR "Needed to run linkTables with --collsize option\n";
+	  exit(1);
+      }
+      if ( !defined($tags{"coll"}) ) {
+	  print STDERR "Found no 'coll' tag in '$stem.srcpar'\n";
+	  print STDERR "Needed to run linkTables with --collsize option\n";
+	  exit(1);
+      }
+      $maxstop = $part[$tags{"stop"}];
+      $maxtext = $part[$tags{"text"}];
+      $maxcoll = $part[$tags{"coll"}];
+      open(SRCPAR, "grep features= $stem.srcpar |");
+      my $fc = <SRCPAR>;
+      close(SRCPAR);
+      chomp($fc);
+      $fc =~ s/^.*=//;
+      if ( $fc != $maxcoll ) {
+	  print STDERR "Seems to be other feature types in '$stem.srcpar'\n";
+	  exit(1);
+      }
+  }
+  if ( $libsvm ) {
+      open(SRCPAR, "grep dfdocs= $stem.srcpar |");
+      my $fc = <SRCPAR>;
+      close(SRCPAR);
+      if ( !defined($fc) ) {
+	print STDERR "Cannot find dfdocs in '$stem.srcpar'\n";
+	exit(1);
+      }
+      chomp($fc);
+      $fc =~ s/^.*=//;
+      if ( $fc !~ /^[0-9]+$/ || $fc<1 ) {
+	  print STDERR "Bad 'dfdocs' in '$stem.srcpar'\n";
+	  exit(1);
+      }
+      $dfdocs = $fc;
+      foreach my $k ( keys(%idf) ) {
+	  $idf{$k} = log(($dfdocs+4.0)/($idf{$k}+4.0));
+      } 
+  }
+}
+  
+#################################################################
+#
+#  Run
+#
+#################################################################
+
+GetOptions(
+     'man'       => sub {pod2usage(-exitstatus => 0, -verbose => 2)},
+      'witdit!' => \$witdit,
+      'ldacol!' => \$ldacol,
+      'numbertopic!' => \$numbertopic,
+      'ldac!' => \$ldac,
+      'sag!' => \$sag,
+      'stc!' => \$stc,
+      'out=s' => \$stemout,
+      'libsvm!' => \$libsvm,
+      'landu!' => \$landu,
+      'landuS!' => \$landuS,
+      'append!' => \$append,
+      'docs!' => \$docs,
+      'matlab!' => \$matlab,
+      'coll!'   => \$coll,
+      'nobag!' => \$nobag,
+      'h|help'       => sub {pod2usage(1)}
+);
+
+pod2usage(-message => "ERROR: need input file and stem")
+      if ( $#ARGV != 1 );
+
+if ( $landuS ) {
+    $landu = 1;
+}
+
+$file = shift();
+$stem = shift();
+if ( $stemout eq "" ) {
+    $stemout = $stem;
+}
+
+
+$doccount = &links::File::loadpars($stem);
+
+if ( $stc || $libsvm ) {
+    $ldac = 1;
+}
+if ( $sag ) {
+    $coll = 1;
+    $links::FILE::buildtext = 1;
+}
+if ( $ldacol ) {
+    $coll = 1;
+}
+if ( $witdit || $matlab || $landu || $coll ) {
+	$nobag = 1;
+}
+if ( $witdit && $matlab ) {
+    print STDERR "Cannot have both --witdit --matlab\n";
+    exit(0);
+}
+
+open(TPC,"<$stem.tpc");
+while ( defined($_=<TPC>) ) {
+    chomp();
+    my $t = substr($_,0,1);
+    $type{$t} = substr($_,2);
+    $typerev{substr($_,2)} = $t;
+}
+close(TPC);
+
+print STDERR "\nNow build the document text bag file\n";
+print STDERR "======================================\n";
+&LoadTables();
+
+&links::File::openzip(\*IN,$file,"linkdata");
+if ( $matlab!= 0 ) {
+    open(W,"<$stem.tokens");
+    open(D,">$stemout.mw");
+    my $cnt = 0;
+    while ( defined($_=<W>) ) {
+	chomp();
+# 	$token[$cnt] = $_;
+	$cnt ++;
+	print D "$cnt:$_\n";
+    }
+    close(D);
+    close(W);   
+    my $dfile = "$stemout.md";
+    if ( $append ) {
+	open(OUTD,">>$dfile");
+	print STDERR "Appending output to '$dfile'\n";
+	print STDERR "\nWARNING:  wont update document statistics at top of \n";
+	print STDERR "      $stemout.md\n";    
+    } else {
+	open(OUTD,">$dfile");
+	printf OUTD "%8d\n", $doccount;
+    }
+    &MakeBags(); 
+    close(OUTD);
+    sysopen(OUTD, $dfile, O_RDWR) or die "Cannot reopen $dfile: $!";
+
+    my $oldfh = select(OUTD); $| = 1; select($oldfh);
+#  now, rewrite header
+    print OUTD sprintf("%8d\n", $doccount);
+    close(OUTD);
+} elsif ( $witdit!= 0 ) {
+    my $wfile = "$stemout.wit";
+    my $dfile = "$stemout.dit";
+    if ( $append ) {
+	open(OUTW,">>$wfile");
+	open(OUTD,">>$dfile");
+	print STDERR "Appending output to '$wfile' and '$dfile'\n";
+    } else {
+	open(OUTW,">$wfile");
+	open(OUTD,">$dfile");
+    }
+    &MakeBags(); 
+    close(OUTW);
+    close(OUTD);
+} elsif ( $landu!= 0 ) {
+    my $dfile = "$stemout.txtlst";
+    if ( $append ) {
+	open(OUT,">>$dfile");
+	print STDERR "Appending output to '$dfile'\n";
+    } else {
+	open(OUT,">$dfile");
+    }
+    &MakeBags(); 
+    close(OUT);
+} elsif ( $ldacol !=0 ) {
+    my $wfile = "$stemout.ws";
+    my $dfile = "$stemout.ds";
+    my $sfile = "$stemout.si";
+    if ( $append ) {
+	open(OUTW,">>$wfile");
+	open(OUTD,">>$dfile");
+	open(OUTS,">>$sfile");
+	print STDERR "Appending output to '$wfile', '$dfile' and '$sfile'\n";
+    } else {
+	open(OUTW,">$wfile");
+	open(OUTD,">$dfile");
+	open(OUTS,">$sfile");
+    }
+    &MakeBags(); 
+    close(OUTW);
+    close(OUTD);
+    close(OUTS);
+    open(T,"<$stem.tokens");
+    open(W,">$stemout.w0");
+    my $cnt = 0;
+    while ( defined($_=<T>) && $cnt<$maxtext ) {
+# 	$token[$cnt] = $_;
+	$cnt ++;
+	print W $_;
+    }
+    close(T);
+    close(W);   
+} else {
+    my $tfile = "$stemout.txtbag";
+    if ( $libsvm ) {
+	$tfile = "$stemout.libsvm";
+    } elsif ( $stc ) {
+	$tfile = "$stemout.stc";
+    } elsif ( $ldac ) {
+	$tfile = "$stemout.ldac";
+    } elsif ( $coll ) {
+	$tfile = "$stemout.termlst";
+	if ( $sag ) {
+	    my $sagfile = "$stemout.yld";
+	    open(SOUT,">$sagfile");
+	    print STDERR "Stream output to '$sagfile'\n";
+ 	}
+    }
+    if ( $append ) {
+	open(OUT,">>$tfile");
+	print STDERR "Appending output to '$tfile'\n";
+    } else {
+	open(OUT,">$tfile");
+	#  first time write header, correct it later
+	if ( $ldac==0 ) {
+	    if ( $coll ) {
+		printf OUT "%8d\n%8d %8d %8d\n", 
+		       $doccount, $maxstop, $maxtext, $maxcoll;
+	    } else {
+		printf OUT "%8d\n%8d\n", $doccount, $featcount;
+	    }
+	}
+    } 
+#  bags generated with the document number to assist sorting;
+#  sorts the bags prior to saving, and cut out the document number
+    &MakeBags(); 
+    close(OUT); 
+    if ( $ldac==0 ) {
+#  we want to write to the front of the file,
+#  without destroying rest of contents, this open does it
+	sysopen(OUT, $tfile, O_RDWR) or die "Cannot reopen $tfile: $!";
+	my $oldfh = select(OUT); $| = 1; select($oldfh);
+#  now, rewrite header
+	if ( $coll ) {
+	    printf OUT "%8d\n%8d %8d %8d\n", 
+	           $doccount, $maxstop, $maxtext, $maxcoll;
+	} else {
+	    printf OUT "%8d\n%8d\n", $doccount, $featcount;
+	}
+	close(OUT);
+    }
+    if ( $sag ) {
+	close(SOUT);
+    }
+}
+close(IN);
+
+if ( $coll ) {
+    print STDERR "Collocation length counts\n";
+    print STDERR "  phrase breaks or rare words = $collcnt[0]\n";
+    print STDERR "  words with no collocations = $collcnt[1]\n";
+    if ( $links::File::collsize>2 ) {
+	print STDERR "  words with 2... collocations = " .
+	    join(" ",@collcnt[2..$links::File::collsize]) . "\n";
+    } else {
+	print STDERR "  words with 2 collocations = $collcnt[2]\n";
+    }
+}
+
+if ( $docs ) {
+#  read again to get docs
+    open(DOCS,">$stemout.docs");
+    binmode DOCS, ':utf8';
+    &links::File::openzip(\*I,$file,"linkdata");
+    my $line = 0;
+    while ( defined($_=<I>) ) {
+	chomp();
+	if ( /^D ([^ ]*) ([^ ]*) (.*)$/ ) {
+	    my $inu = &links::URLs::StandardURL($1);
+	    my $id = uc($2);
+	    my $titles = $3;
+	    my $hash = &links::URLs::easyhash64char($typerev{"link"}.$inu);
+	    # print STDERR "DOCS > $line $hash $inu $id $titles\n";
+	    print DOCS "$line $inu $id $hash $titles\n";
+	    $line ++;	  
+	}
+    }
+    close(I);
+    close(DOCS);
+    print STDERR "Reprocessed $line documents\n";
+}
+# generate titles file
+system("cut -f 1,5- -d ' ' $stemout.docs > $stemout.titles"); 
+
+if ( !$witdit && !$matlab && !$landu && !$coll && !$libsvm && !$ldac
+     && !$ldacol ) {
+    open(OUT,">$stemout.cnf");
+    print OUT "#\nindexdensity=10\ninput=\"$stemout.txtbag\"\nbaggedinput\n";
+    close(OUT);
+}
+
+exit 0;
+
+__END__
+
+=head1 NAME
+    
+linkBags - input file of links and tokens for document set, 
+plus tables generated with 
+I<linkTables>, to produce forward bags or processed document streams
+in different file formats.
+
+=head1 SYNOPSIS
+    
+linkBags [options] LINK-FILE STEM
+
+Options:
+
+    LINK-FILE           Filename for input links file
+    STEM                Stem for output file, several extensions used.
+    --append            Append output bags/lists to existing output file.
+    --coll              Special output with embedded collocations
+    --docs              Rebuild the .docs file since its now different
+    --landu             Lan Du's output but without grouped data
+    --landuS            Lan Du's output with grouped and sequential data
+    --ldac              Format compatible with LDA-C code from Blei
+    --ldacol            Format compatible with LDA-COL of Matlab Topic 
+                        Modeling Toolbox
+    --libsvm            Print in libsvm format, and expect there exists
+                        a tag called "topic" with integer values
+    --matlab            output a simple matlab format for sequential data
+    --nobag             don't bag, so used for sequential data
+    --numbertopic       when topics output, convert them to integers 1,2,...
+                        according to the order given in the .words file
+    --out STEMOUT       put output files to STEMOUT not STEM
+    --sag               Johnson's format of LDA-COL
+    --stc               Zhu's format for STC, extension of LDA-C format
+    --witdit            output into Dave Newman's .wit and .dit format
+    -h, --help          display help message and exit.
+     --man              print man page and exit.
+
+=head1 DESCRIPTION
+
+Input file of links and tags is assumed to be in UTF-8 encoding
+in the format given in 
+I<linkTables>(1).
+Separate
+tables (
+F<STEM.words>, 
+F<STEM.docs>, 
+F<STEM.docmap>) have previously been
+made by running
+I<linkTables>(1).  Some flags and parameters are passed on from
+this via
+F<STEM.srcpar>.
+If a collocation output is used, then collocation
+proprocessing, triggered by the
+I<--collsize C> option to
+I<linkTables>(1) should have been used.
+
+If redirects exist in the links file, process them out first using
+the 
+I<linkRedir>(1) script.  Code assumes that collection is small enough so
+that all required hash tables fit into memory. 
+
+=head1 OUTPUT FILES
+
+Output files in form STEM.EXT depending on the output file switch.
+If the
+I <--out> option is used, 
+then they go to STEMOUT.EXt instead.
+EXT is one of:
+
+    .docs, .titles : rebuilt if --docs used
+    .libsvm      : Libsvm format initiated by --libsvm
+    .termlst     : collocation stream data initiated by --col
+    .txtbag[.gz] : constructed text bag, default or with "--ldac" or "--stc"
+    .txtlst      : structured document format initiated by --landu
+    .wit + .dit  : lines list document indices and word indices, 
+                   simple Matlab style format initiated by --witdit
+    .mw + .md    : Matlab style format with docs and dictionary files
+    .yld        : text version of collocation segments
+    .ws,.ds,.si,.w0 : Matlab format used for LDA-COL model of the
+                      Matlab Topic Modeling Toolbox, by --ldacol
+
+The default output has words bagged in the
+F<STEM.txtbag> file.
+All indices are reported as they appear in the 
+F<STEM.words> file, so indices offset from 0.
+Note some output files offset indices by 1:
+F<STEM.ldac> ,
+F<STEM.stc> and
+F<STEM.libsvm> .
+The file starts with the document count and the token count then
+gives each document, one per line.  The file looks like:
+    395
+    17278
+    2 157 1 16318 1
+    5 117 1 118 2 ...
+
+This means there are 395 documents, 17278 tokens
+(words, tags, urls, etc., as listed in the 
+F<STEM.words> file), and the first document has 2
+distinct words, 157 and 16318,
+each appearing once whereas the second document has
+5 different words starting 117 118 ... appearing respectively 
+once, twice, ....  Entries are bagged so all words have their
+count supplied after the word index.  Many counts will be 1, and
+some 2, 3 less frequently, so bagged data is readily seen.
+
+The 
+I<--nobag> option modifies the default option by not bagging
+tokens, rather the original stream is preserved
+with stop words and other punctuation removed.
+That is, word indices are listed with no counts and in the
+order of occurrence.  This outputs a 
+stream of dictionary indices with each line being a document.
+The above example becomes
+    395
+    17278
+    2 16318 157 
+    7 117 1842 118 395 118 ...
+
+where the second document has words now in order of occurence,
+and "118" appears twice.  Note also the word counts at the beginning
+of the line can now be greater:  they count the words in the stream,
+not the number of distinct words in the bag.
+
+The
+I<--ldac> option modifies the default option in two ways. 
+First, the 2 line header is not included.  Second
+word indices and their counts appear as "word:count"
+and the word is offset by 0.
+So the above becomes
+    2 157:1 16318:1
+    5 117:1 118:2 ...
+
+The 
+I<--stc> option creates a file according to the
+formatting rules in the documentation for Jun Zhu's STC code.
+The feature numbers are offset by 1 not 0.
+This adds a "label" or "topic" as column two into the LDA-C format.
+    2 sci 158:1 16319:1
+    5 none 118:1 119:2 ...
+
+The topic added is the last "topic" type available, though 
+leading spaces are deleted and only the first non-space tokens are used. 
+If none is found, the topic is given as "none" (or 0).
+Use the 
+I<--numbertopic> option to convert the topic to an integer, also offset by 1.
+
+The
+I<--libsvm> option is identical to the 
+I<--stc> option
+but no preceeding count of entries is given.
+
+If the 
+I<--landuS>
+output format is used, then words are indexed as in the
+F<STEM.words> file.  This format can produce structured documents,
+though the options are not documented here.
+Output is one entry per line in the
+F<STEM.txtlst> file in the form
+  doc:39
+  para:2
+  word:157
+  word:16318
+  para:5
+  word:117
+  ...
+
+This says the document has 39 paragraphs, and the
+paragraph sizes are 2, 5, ...
+
+If the 
+I<--landu>
+output format is used, then words are indexed as in the
+F<STEM.words> file.  This format does not produce structured documents,
+so every document has only 1 paragraph and all content
+placed under it.
+Output is one entry per line in the
+F<STEM.txtlst> file in the form
+  doc:1
+  para:378
+  word:157
+  word:16318
+  word:117
+  ...
+
+Here, the length of the document is 378 words.
+
+The first entry "doc:395" says there are "395" documents.
+The second entry "para:2" says the first document has 2 words,
+which follow as "157 16318".  The fifth entry starts the second document,
+which by "para:5" has 5 distinct words.
+Note the 
+F<STEM.words> file has
+indices starting from zero, so you should get some entries "word:0".
+
+If the 
+I<--matlab> option
+is used, then the dictionary is output in the 
+F<STEM.mw> file.  Lines have "index:word", in order
+with indices starting from 1.
+The documents themselves are output as indexed lists in the
+F<STEM.md> file.
+Output starts with one line giving the document count
+followed by one line per document.  The above example is now
+    395
+    2 158 16319
+    5 118 ...
+
+The first integer gives the count of words in the document.
+Following integers on the line give the word indices.
+Therefore lines in this format can be very long!
+
+The 
+I<--ldacol> option
+prints collocation information in a Matlab format suitable for
+the LDA_COL model uses by the 
+I<Matlab Topic Modeling Toolbox> of Steyvers and Griffiths.
+This outputs the 
+F<.ws>,
+F<.ds>, and
+F<.si> files, and the 
+F<.w0> file is got by the 
+F<.token> file.
+By convention, word and document indices start from 1.
+
+The 
+I<--coll> option
+prints collocation candidates in a
+F<.termlst> file, which is a list of dictionary encoded
+terms replacing the
+F<.txtlst> file.
+The previous example could become:
+     395
+     100 17278 22649
+     2 2 16318 157 
+     7 2 117 19283 1 1842 0 3 118 20126 18243 2 395 18926 1 118 0 ...
+
+Again, there are 395 documents.
+This format also stores stop words as well as collocations.
+The second line with its three numbers indicates the dimensions of the
+tokenisation.   There are 100 stopwords, 17278 words
+(including stopwords), and the last (22649-17278) tokens
+are collocations.
+Subsequently each document follows, one per line.
+The first number gives the number of tokens.
+Streams of tokens are segmented and segments delimited with 0,
+so on this line starts with two segments:
+    2 117 19283 1 1842
+    3 118 20126 18243 2 395 18926 1 118
+
+For each word token we give the token as well as any collocations
+in the stream that start with the token at this location.
+
+For the first line,
+"2 117 19283 1 1842", has entries 
+"2 117 19283" and "1 1842" which correspond to
+the two word tokens 117 and 1842.  The initial 2 indicates there
+is also one collocation starting with this word token, 
+which must be "117 1842",
+and has collocation index 19283.  The second entry
+"1 1842" indicates the word
+1842 occurs as the start of no collocations here.
+
+For the second line, "3 118 20126 18243 2 395 18926 1 118",
+the entries are
+"3 118 20126 18243", "2 395 18926" and "1 118".
+Thus the word tokens are 118, 395 and 118.
+The first 118 also starts collocations 20126 and 18243,
+and the 395 also starts collocation 18926.
+
+
+The
+I<--sag> option switches on the
+I<--coll> option and also prints out a text version
+of the collocations in a
+F<.yld> file.  The format is suggested by Mark Johnson.
+A document is broken up into segments.  Any collocation
+must be entirely within a single segment.
+Each line of the format is then
+    N_ word1 word2 ...
+
+where 
+I<N> is the document number and
+F<word1 word2 ...> is the words in the segment.
+
+
+=head1 SEE ALSO
+
+I<links::URLs>(3), 
+I<links::File>(3), 
+I<linkRedir>(1), 
+I<linkTables>(1). 
+
+text-bags is in
+F<http://github.com>
+
+=head1 AUTHOR
+
+Wray Buntine
+
+=head1 COPYRIGHT AND LICENSE
+
+Copyright (C) 2005-2012 Wray Buntine
+
+This library is free software; you can redistribute it and/or modify
+it under the same terms as Perl itself, either Perl version 5.8.4 or,
+at your option, any later version of Perl 5 you may have available.
+
+=cut

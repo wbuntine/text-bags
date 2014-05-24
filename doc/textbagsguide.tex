@@ -1,0 +1,245 @@
+\documentclass{article}
+\usepackage[final]{pdfpages}
+\usepackage{boxedminipage}
+\usepackage[final]{hyperref}
+
+\author{Wray Buntine\\
+  Monash University\\
+  Clayton, 3800, ACT Australia\\
+  \texttt{wray.buntine@monash.edu}
+ }
+
+\title{Text-bags User Guide}
+
+\usepackage{url}
+ \usepackage{graphicx}
+\begin{document}
+
+
+\maketitle
+
+
+\begin{abstract}
+This report is a user guide for the
+\emph{Text-bags} 
+software suite.
+This is a Perl suite for preprocessing text collections
+to create dictionaries and bag/list files for use
+by topic modelling software. Preprocessing can include
+linguistic tasks and output is in various sparse vector formats.
+\end{abstract}
+
+\newpage
+\thispagestyle{empty}
+\tableofcontents
+\newpage
+\setcounter{page}{1}
+
+
+\section{Introduction}
+
+.	
+
+\subsection{What is it?}
+
+The suite supports preprocessing of text files to produce
+bags and lists as sparse vectors, as input for various
+topic modelling systems.
+
+The main features of the current system are:
+\begin{description}
+\item[Simple input:]
+a simple text input format that can be easily read and edited.
+This can be generated in several ways,
+for instance via the example XSL scripts.
+\item[Varied sparse matrix outputs:]
+output data is bag or list data for use by the topic modelling
+programme of choice,
+for instance LdaC, docword, STC, etc.
+\item[Output meta-data:]
+various metadata and statistics about words,
+documents and tokens.
+\item[Scalable implementation:]
+the system is built to use standard packages such as {\tt sort}
+that readily scale to 10s of gigabytes.
+\item[Worked examples:]
+these are given for some old favorites such as 20 News Groups,
+Reuters 21578, and Pubmed's Medline data.
+\end{description}
+
+\section{Available Information}
+
+Several demonstrations are retained in the
+release directory and not installed.
+Thus, after installation, keep the release there to access the following:
+\begin{description}
+\item[examples/]
+the examples directory is explained in a later section of this document.
+It contains several worked examples illustrating different ways to
+feed data into {\tt text-bags}.
+\item[t/]
+the tests directory contains simple tests with known answers
+used by the Perl test system.
+\end{description}
+
+A broader set of data sets in ``.links'' format,
+this user guide and the man pages can be found at Wray Buntine's
+Software and Data page.
+\url{http://www.nicta.com.au/people/buntinew}.
+
+\section{Input and Output Files}
+
+The system inputs data in the form of a ``.links'' file described below.
+Output files fall under three groups,
+a configuration file, various meta-data files, 
+and various choices of the sparse matrix file(s).
+
+\subsection{Input document data}
+\label{ssct_input}
+
+Input lines can have the R form for redirects:
+\begin{verbatim}
+     R <URL> <URL-REDIRECTED-TO>
+\end{verbatim}
+These entries are ignored by this script, and should be first
+eliminated with {\tt linkRedir}.
+
+The main input is the
+D form for documents and their links and link text
+\begin{verbatim}
+        D <URL> <HASHID> <TITLE>
+        <OUTGOING-URL> <LINK-TEXT>
+        ...
+        EOL
+        <TYPE> <TOKENS>
+        ...
+        EOD
+\end{verbatim}
+
+The text "EOD" acts as a
+document terminator and can be missing if no tokens exist.
+The text "EOL" is a link terminator.  The <URL>s and <HASHID>s must not have
+spaces or the processing will get confused since R and D records are
+split on spaces.   Note text at the end of the line is an exception.
+<HASHID> is any externally defined record identifier.  The default
+is a 32 character hexadecimal from an MD5 hash of the text.
+
+<TYPE> is intended to be a short bit of alphabetic text describing the
+type such as 'person', 'company', etc.
+Reserved <TYPE>s are 'doc', link to a document in the collection,
+
+
+\section{Worked Examples}
+
+Several worked examples are given in the {\tt examples/} sub-directory.
+These demonstrate a variety of ways of creating inputs, and a variety of uses.
+In each directory, the {\tt README} file explains where to get the
+necessary data and how to run the example.
+
+\subsection{Tests}
+
+A number of simple test sets are given in the top level
+{\tt tests/} directory.   This are generated from known
+models recorded in stems like {\tt t2.src} using the modelling
+sampling option, {\tt mpupd -S}.
+
+In this way, a known ``truth" is set down in the model, and then
+data generated.  Thus, when {\tt mphier} is run to estimate a model
+from the data, it can be compared with the truth.
+This allows careful testing of algorithms.
+
+The test directory contains a number of known models, scripts for
+generating the data in a {\tt Makefile}, and some test scripts.
+Details are in the {\tt README} file.
+
+\subsection{Examples/Reuters}
+
+These examples show how you can work with the Reuters Corpus Volume 1.
+Reuters stopped distributing the corpus in 2004. 
+Instead, the Reuters corpus is now available from NIST, the 
+National Institute of Science and Technology.
+
+The Reuters news items are in NewsML, an XML format, with one
+file per item.   An XSLT script is given so that text data suitable
+for {\tt linkTables} can be extracted from the XML.
+The {\tt README} file shows how this is used.
+
+\subsection{Examples/Wikipedia}
+
+Two examples are given for the Wikipedia.
+
+In the first example, we have had a small collection of documents packaged up
+as an XML suite. 
+The intent is, you have document collections available to you in XML.
+You use XSLT or another XML formatting system to convert the documents
+to the simple tokenised input required by {\tt linkBags}.  This then
+manages the preparation of bags for the running of topic models.
+The problem with XSLT is that it requires a full parse of the XML,
+so you need to keep the XML files down to chunks of 50Mb or less.
+Otherwise its a good way to process files since everything is
+correctly parsed.
+In this example, an XSLT script and a matching XML file are given.
+This just illustrates the use of XML and XSL for topic modelling.
+
+The second example allows working on the full Wikipedia collection.
+The Freebase Wikipedia Extraction (WEX)\footnote{\tt
+http://download.freebase.com/wex} is a processed dump of the
+English language Wikipedia, provided free of charge for any
+purpose with regular updates by Metaweb Technologies.  
+A Perl script is provide in text-bags called {\tt wex2link} that
+converts the WEX article files into the format expected of
+{\tt linkTables}.  Assembling the bags needs a lot of disk space, and takes
+a day or two to run all the steps on your desktop.
+
+
+\subsubsection*{Acknowledgements.}
+This package has been developed over time at the
+University of Helsinki and NICTA Canberra.
+Support is from
+the Academy of Finland under the
+PROSE Project, by Finnish Technology Development Center (TEKES) under
+the Search-Ina-Box Project, by the IST Programme of the European
+Community under ALVIS Superpeer Semantic Search Engine
+(IST-1-002068-IP) and the PASCAL Network of Excellence
+(IST-2002-5006778).
+NICTA is funded by the Australian Government through the Department of Communications and the Australian Research Council through the ICT Centre of Excellence Program. NICTA is also funded and supported by the Australian Capital Territory, the New South Wales, Queensland and Victorian Governments, the Australian National University, the University of New South Wales, the University of Melbourne, the University of Queensland, the University of Sydney, Griffith University, Queensland University of Technology, Monash University and other university partners. 
+
+\newpage
+\appendix
+\section{Command Line Options}
+%
+%      pdf files assembled with the Makefile
+%
+
+\section{{\tt link} Command Line Options}
+
+The man pages for the Perl scripts for
+processing of simple token/text files into a sparse matrix format.
+
+\includepdf[landscape, pages=1-4]{linkBags.pdf}
+\includepdf[landscape, pages=1]{linkCoco.pdf}
+\includepdf[landscape, pages=1]{linkMatch.pdf}
+\includepdf[landscape, pages=1]{linkParse.pdf}
+\includepdf[landscape, pages=1]{linkRedir.pdf}
+\includepdf[landscape, pages=1]{linkSent.pdf}
+\includepdf[landscape, pages=1-2]{linkTables.pdf}
+\includepdf[landscape, pages=1]{linkText.pdf}
+
+\section{Utility Command Line Options}
+
+The {\tt wex2link} utility converts WEX Wikipedia dumps into the links format used by the
+{\tt link} utilities.
+
+\includepdf[landscape, pages=1]{wex2link.pdf}
+
+\section{Utility Command Line Options}
+
+The {\tt links::File} and {\tt links::URLs} packages are small utility packages
+common the the {\tt link} routines that do standard things like
+hashing and tokensization.
+
+\includepdf[landscape, pages=1-2]{links::File.pdf}
+\includepdf[landscape, pages=1]{links::URLs.pdf}
+
+\end{document}
+

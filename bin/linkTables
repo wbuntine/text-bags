@@ -1,0 +1,806 @@
+#!/usr/bin/perl -w
+
+use strict;
+use utf8;
+use POSIX;
+use HTML::Entities;
+use links::URLs;
+use links::File;
+use Getopt::Long;
+use Pod::Usage;
+use Lingua::Stem;
+use FileHandle;
+           
+# encoding pragmas follow any includes like "use"
+use open ':utf8';
+binmode STDIN, ":utf8";
+binmode STDERR, ":utf8";
+
+#  ensure sort handles UTF8 order
+my $SORTCODE = "" ;
+my $SORTARGS = "" ;
+
+#  collocation minimum count to use
+my $COLLMIN = 4;
+
+my $MINCOUNT = 1;
+my $dfdocs = 0;
+my $MAXCOUNT = 1000000000;
+my $MAXDF = 1000000000;
+my $MINDF = 1;
+my $docfeats = 0;
+my $stopfile = "";
+my $typematch = "";
+my $fixdocs = 0;    # set this to fix everything but .docs 
+my $DICTSIZE = 1000000;
+#  within a type, order by 
+my $typesort = "-k3,3 -n -r -s";    # decreasing count
+#  my $typesort = "-k3- ";     # alphabetically
+
+#  type arrays as gathered, some prefilled
+my %type = ();
+my %typerev = ();
+my %typecnt =  ();
+my %typeexclude = ();
+#  pre-fill known type
+$type{"a"} = "doc";
+$type{"b"} = "text";
+$type{"c"} = "link";
+$typerev{"doc"} = "a";
+$typerev{"text"} = "b";
+$typerev{"link"} = "c";
+$typecnt{"a"} = 0;
+$typecnt{"b"} = 0;
+$typecnt{"c"} = 0;
+
+#  next free type
+my $typecode = "c";
+
+#  check options
+
+GetOptions(
+     'man'       => sub {pod2usage(-exitstatus => 0, -verbose => 2)},
+      'stopfile=s' => \$stopfile,
+      'typematch=s'    => \$typematch,
+      'match=s'    => \$links::File::wordmatch,
+      'mincount=i' => \$MINCOUNT,
+      'mindf=i' => \$MINDF,
+      'breakdash!'   => \$links::File::breakdash,
+      'docfeats'   => \$docfeats,
+      'dfdocs=i',  =>  \$dfdocs,
+      'maxcount=i' => \$MAXCOUNT,
+      'maxdf=i' => \$MAXDF,
+      'dictsize=i' => \$DICTSIZE,
+      'collsize=i' => \$links::File::collsize,
+      'colllastnotstop!' => \$links::File::colllastnotstop,
+      'collnotstop!' => \$links::File::collnotstop,
+      'collrepeat!' => \$links::File::collrepeatwords,
+      'collmin=i' => \$COLLMIN,
+      'nolowercase!' => \$links::File::nolcase,
+      'docs' => \$fixdocs,
+      'tagged!' => \$links::File::tagged,
+      'typesort=s' => \$typesort,
+      'linktext!' => \$links::File::linktext,
+      'stemming' => \$links::File::stemming,
+      'titletext!' => \$links::File::titletext,
+      'v|verbose' => \$links::File::verbose,
+      'nocleanurl!' => \$links::URLs::nocleanurl,
+      'nocaseurl!' => \$links::URLs::nocaseurl,
+      'keepfragurl!' => \$links::URLs::keepfragurl,
+      'h|help'       => sub {pod2usage(1)}
+);
+
+pod2usage(-message => "ERROR: need input file and stem")
+      if ( $#ARGV != 1 );
+
+my $file = shift();
+my $stem = shift();
+
+my $doccount = 0;
+my $featcount = 0;
+#  token value plus count
+my %token = ();
+my %tokencnt = ();        #   sum occurrences
+my %doccnt = ();          #   doc frequency (.e., 1 per doc)
+my %doctoken = ();        # says if token in doc, used for $doccnt{}
+my $tokens = 0;
+
+#  counts lines in links file
+my $line = 0;
+
+#  Keeps track of which doc URLs are also link features
+#    BUT  poorly coded so switch off by default ... need to fix
+#  maps a cleaned URL's hash to a docID 
+my %docmap = ();
+#  maps a docID to a sequence number
+my %docid = ();
+
+my $stemmer;
+
+#  check excluded types
+if ( $typematch ne "" ) {
+    foreach my $t ( keys %typerev ) {
+	if ( $t !~ /$typematch/ ) {
+	    $typeexclude{$t} = 1;
+	}
+    }
+}
+
+#  load up word resources
+if ( $links::File::stemming ) {
+    &links::File::loadstemmer();
+}
+
+if ( $stopfile ) {
+    &links::File::loadstops($stopfile);
+    open(S,">$stem.stops");
+    print S join("\n",keys %links::File::stops) . "\n";
+    close(S);
+} else {
+    unlink("$stem.stops");
+}
+
+
+#  define a legal collocation token
+#         currently, cannot end in stop word
+sub coll_tok_legal() {
+    my $tok = shift();
+    my $tok1 = $tok;
+    if ( $links::File::colllastnotstop!=0 && $tok1 =~ s/.*$links::File::collsep// ) {
+	if ( defined($links::File::stops{lc($tok1)}) ) {
+	    return 0;
+	}
+    }
+    if ( $links::File::collnotstop!=0 ) {
+	if ( grep(defined($links::File::stops{lc($_)}), split(/$links::File::collsep/,$tok))>0 ) {
+	    return 0;
+	}
+    }
+    if ( $links::File::collrepeatwords==0 ) {
+	my %a = ();
+	foreach my $t ( split(/$links::File::collsep/,$tok) ) {
+	    if ( defined($a{$t}) ) {
+		my $ptok = $tok;
+		$ptok =~ s/$links::File::collsep/ /g;
+		print STDERR "  ... dropping token '$ptok' with repeats '$t'\n";
+		return 0;
+	    }
+	    $a{$t} = 1;
+	}
+    }
+    return 1;
+}
+
+#  dump out current tokens
+#
+#      we have insured that any hash that belongs to a document
+#      is reserved for links
+
+
+sub dump_tokens() {
+    open(TMPD,">>$stem.tokens.tmp");
+    binmode TMPD, ':utf8';
+    foreach my $t ( keys(%token) ) {
+	my $tk = 0;
+	if ( defined($doccnt{$t}) ) {
+	    $tk = $doccnt{$t};
+	}
+	print TMPD substr($token{$t},0,1) . " $t $tokencnt{$t} $tk "
+	    . substr($token{$t},1) . "\n";
+    }
+    close(TMPD);
+    print STDERR "Dumped $tokens tokens after $line records\n";
+    %token = ();
+    %doccnt = ();
+    %tokencnt = ();
+    $tokens = 0;
+}
+
+#  ensure to make "link" entries dominate, they should never be
+#  dropped in favor of non-link entries
+sub table() {
+    my $tp = $_[0];
+    if ( $tp eq "endword" || defined($typeexclude{$tp}) ) {
+	 return 0;
+    }
+    my $text = $_[1];
+    if ( $text eq "" ) {
+	print STDERR "Got empty item for tp=$tp at line $line\n";
+	return 1;
+    }
+    my $tpc = $typerev{$tp};
+    # print "table($tpc,$text)\n";
+    if ( !defined($tpc) ) {
+	if ( $typecode eq "z" ) {
+	    print STDERR "Typecodes overran, did a-z\n";
+	    exit(1);
+	} else {
+	    $typecode = chr(ord($typecode)+1);
+	}
+	$tpc = $typecode;
+	$typerev{$tp} = $tpc;
+	$type{$tpc} = $tp;
+	$typecnt{$tpc} = 0;
+	if ( $links::File::verbose ) {
+	    print STDERR "New type '$tp' assigned to code $tpc\n";
+	}
+	if ( $tp !~ /$typematch/ ) {
+	    $typeexclude{$tp} = 1;
+	    return 0;
+	}
+    }
+    if ( !defined($text) ) {
+	return 1;
+    }
+    my $code = "$tpc$text";
+    # print STDERR "Table $tpc -> $text\n";
+    my $h = &links::URLs::easyhash64char($code);
+    if ( defined($token{$h}) ) {
+	if ( $token{$h} ne $code ) {
+	    if ( defined($docmap{$h}) ) {
+		#  documents always override
+		if ( $tp eq "link" ) {
+		    print STDERR "Dropping token '$token{$h}' with hash $h due to clash\n";
+		    $token{$h} = $code;
+		} else {
+		    print STDERR "Dropping token '$code' with hash $h due to clash\n";
+		}
+	    } else {
+		print STDERR "Dropping token '$code' with hash $h due to clash\n";
+	    }
+	} else {
+	    $tokencnt{$h}++;
+	    if ( ($dfdocs==0 || $line<$dfdocs )
+		&& !defined($doctoken{$h}) ) { 
+		$doccnt{$h}++; 
+		$doctoken{$h} = 1;
+	    }
+	    # print STDERR "Old code $h - > $tokencnt{$h}\n";
+	}
+    } else {
+	if ( !$docfeats || $tp eq "link" || ! defined($docmap{$h}) ) {
+	    $token{$h} = $code;
+	    $tokens++;
+	    $tokencnt{$h}++;
+	    if ( ($dfdocs==0 || $line<$dfdocs)
+		&& !defined($doctoken{$h}) ) { 
+		$doctoken{$h} = 1;
+		$doccnt{$h}++; 
+	    }
+	    # print STDERR "New code $h\n";
+	}
+    }
+    if ( $tokens>$DICTSIZE ) {
+	&dump_tokens();
+    }
+    return 0;
+}
+
+#  last values 
+my $nt_type;
+my $nt_hash;
+my $nt_cnt;
+my $nt_df;
+my $nt_tok;
+
+sub is_next_tok() {
+    if ( defined($nt_type) ) {
+	if ( $nt_type eq "" ) {
+	    return 0;
+	}
+    } elsif ( eof(TMP) ) {
+	return 0;
+    }
+    return 1;
+}
+
+sub next_tok() {
+    while ( 1 ) {
+	if ( eof(TMP) ) {
+	    if ( $nt_type ne "" ) {
+		my $typ = $nt_type;
+		$nt_type = "";
+		return ($typ, $nt_hash, $nt_cnt, $nt_df, $nt_tok);
+	    } else {
+		return undef;
+	    }
+	}
+	$_ = <TMP>;
+	chomp();
+	if ( $_ =~ /^([^ ]) ([^ ]+) ([^ ]+) ([^ ]+) (.*)/ ) {
+	    if ( !defined($nt_hash) ) {
+		$nt_type = $1;
+		$nt_hash = $2;
+		$nt_cnt = $3;
+		$nt_df = $4;
+		$nt_tok = $5;
+	    } elsif ( $2 eq $nt_hash ) {
+		# merge
+		$nt_cnt += $3;
+		$nt_df += $4;
+	    } else {
+		#  return last saved
+		my $typ = $nt_type;
+		my $hash = $nt_hash;
+		my $cnt = $nt_cnt;
+		my $df = $nt_df;
+		my $tok = $nt_tok;
+		$nt_type = $1;
+		$nt_hash = $2;
+		$nt_cnt = $3;
+		$nt_df = $4;
+		$nt_tok = $5;
+		return ($typ,$hash,$cnt,$df,$tok);
+	    }
+	} else {
+	    print STDERR "Cannot parse token.tmp line: $_\n";
+	    exit(1);
+	}
+    }
+}
+
+if ( $fixdocs ) {
+    #  we just update the docs file
+    #
+    my $line = 0;
+    if ( -f "$stem.docs" ) {
+	#  read last line to get last document number
+	open(ND,"tail -1 $stem.docs |") or die "Cannot read $stem.docs: $!\n";
+	$_ = <ND>;
+	close(ND);
+	if ( /^([0-9]+) / ) {
+	    $line = int($1) + 1;
+	} else {
+	    print STDERR "Cannot read document index from $stem.docs\n";
+	    exit(1);
+	}
+	#  now start from here, update .docs
+	open(DOCS,">>$stem.docs");
+	&links::File::openzip(\*I,$file,"linkdata");
+	while ( defined($_=<I>) ) {
+	    chomp();
+	    if ( /^D ([^ ]*) ([^ ]*) (.*)$/ ) {
+		my $inu = &links::URLs::StandardURL($1);
+		my $id = uc($2);
+		my $titles = $3;
+		my $hash = &links::URLs::easyhash64char($typerev{"link"}.$inu);
+		print DOCS "$line $inu $id $hash $titles\n";
+		$line ++;
+		for ( $_=<I>,chomp(); $_ && $_ ne "EOD";
+		      $_=<I>,chomp() ) {
+		    #  skip to end of record
+		}
+	    }
+	}
+	close(I);
+	close(DOCS);
+	#  update .srcpar
+	open(SRCPAR,"<$stem.srcpar");
+	my $sp = "";
+	while ( defined($_=<SRCPAR>) ) {
+	    $sp .= $_;
+	}
+	close(SRCPAR);
+	$sp =~ s/\ndocuments=.*/\ndocuments=$line/;
+	open(SRCPAR,">$stem.srcpar");
+	print SRCPAR $sp;
+	close(SRCPAR);
+	exit(0);
+    } else {
+	print STDERR "Cannot open $stem.docs\n";
+	exit(1);
+    }
+}
+
+#  one pass fills tables
+unlink("$stem.tokens.tmp");
+foreach my $t ( keys %type ) {
+    unlink "$stem.tokens.tmp.$t";
+}
+$tokens = 0;
+
+open(DOCS,">$stem.docs");
+binmode DOCS, ':utf8';
+&links::File::openzip(\*I,$file,"linkdata");
+my $tablelink = 1;
+while ( defined($_=<I>) ) {
+  chomp();
+  if ( /^D ([^ ]*) ([^ ]*) (.*)$/ ) {
+    my $inu = &links::URLs::StandardURL($1);
+    my $id = uc($2);
+    my $titles = $3;
+    my $hash = &links::URLs::easyhash64char($typerev{"link"}.$inu);
+    %doctoken = ();
+    # print STDERR "DOCS > $line $hash $inu $id $titles\n";
+    print DOCS "$line $inu $id $hash $titles\n";
+    if ( $docfeats ) {
+	#   notice we overwrite any previous docID
+	$docid{$id} = $line;
+	if ( defined($docmap{$hash}) ) {
+	    $docmap{$hash} .= " $id";
+	} else {
+	    $docmap{$hash} = $id;
+	}
+    }
+    $line ++;	  
+    if ( $links::File::titletext ) {
+      &links::File::tabletext(\&table,$titles);
+    }
+    #   now process links
+    for ( $_=<I>,chomp(); $_ && $_ ne "EOD" && $_ ne "EOL";
+	  $_=<I>,chomp() ) {
+	if ( !/^ / ) {
+	    # ignore link entries starting with space
+	    my $link = $_;
+	    $link =~ s/ .*//;
+	    # print STDERR "LINK: $link $_\n";
+	    $link = &links::URLs::StandardURL($link);
+	    if ( &table("link",$link)!=0 ) {
+		print STDERR "Couldn't table link for $_\n";
+	    } else {
+		if ( $links::File::linktext && /^([^ ]+) (.*)$/ ) {
+		    &links::File::tabletext(\&table,$2);
+		}
+	    }
+	}
+    }
+    if ( $_ eq "EOL" ) {
+      #   now process tokens
+      for ( $_=<I>,chomp(); $_ && $_ ne "EOD";
+	    $_=<I>,chomp() ) {
+	if ( /^([^ ]+) (.*)$/ ) {
+	  if ( $1 eq "text" ) {
+	    &links::File::tabletext(\&table,$2);
+	  } else {
+	    &table($1,$2);
+	  }
+	}
+      }
+    }
+  } elsif ( /^D / ) {
+    print STDERR "Unmatched document entry: (($_))\n";
+  }
+}
+close(I);
+close(DOCS);
+print STDERR "Processed $line documents\n";
+$doccount = $line;
+
+&dump_tokens();
+
+# now sort by type, docs first, and add line number
+# also print doc mappings, i.e., feature to original document
+#
+#    each type has its own file
+my %fht = ();
+
+open(TMP,"ls -l $stem.tokens.tmp |");
+$_ = <TMP>;
+close(TMP);
+print STDERR $_;
+
+open(TMP,"$SORTCODE  sort $SORTARGS -k 2 $stem.tokens.tmp |");
+binmode TMP, ":utf8";
+foreach my $t ( keys %type ) {
+    my $fh = new FileHandle ">> $stem.tokens.tmp.$t";
+    $fht{$t} = $fh;
+    binmode $fh, ':utf8';
+}
+my $stoptype = $typerev{"stop"};
+my $colltype = $typerev{"coll"};
+
+while ( &is_next_tok() ) {
+    my ($type,$hash,$cnt,$df,$tok) = &next_tok();
+    # print STDERR "First sort : $type,$hash,$cnt,$tok\n";
+    if ( ( (!defined($colltype) || ($colltype ne $type)) 
+	     && $cnt>=$MINCOUNT && $df>=$MINDF && $cnt<=$MAXCOUNT && $df<=$MAXDF )
+	 || (defined($colltype) && ($colltype eq $type) && 
+	     ($cnt >= $COLLMIN) && &coll_tok_legal($tok) ) ) {
+	my $fh = $fht{$type};
+	if ( !defined($fh) ) {
+	    print STDERR "Internal filing error for $stem.tokens.tmp\n";
+	    exit(1);
+	}
+	print $fh "$hash $cnt $df $tok\n";
+	$typecnt{$type} ++;
+    }
+}
+foreach my $t ( keys %type ) {
+    my $fh = $fht{$t};
+    close($fh);
+}
+
+# now sort by doc count, and add line number as feature index
+# also print doc mappings, i.e., feature to original document
+
+open(TPC,">$stem.tpc");
+foreach my $t ( sort keys %type ) {
+    print TPC "$t $type{$t}\n";
+}
+close(TPC);
+
+open(TOKENS,">$stem.tokens");
+binmode TOKENS, ":utf8";
+open(TOKENMAP,">$stem.words");
+if ( $links::File::collsize>1 ) {
+    open(TOKENLEN,">$stem.wordlen");
+}
+binmode TOKENMAP, ":utf8";
+if ( $docfeats ) {
+    open(DOCMAP,">$stem.docfeats");
+}
+$line = 0;
+my @keylist = ();
+if ( $links::File::collsize>1 && defined($stoptype) ) {
+    @keylist = ($stoptype);
+    push(@keylist, grep( $typecnt{$_}>0 && ($_ ne $stoptype),  
+			 sort keys %type) );
+} else {
+    @keylist = grep( $typecnt{$_}>0,  sort keys %type);
+}
+foreach my $t ( @keylist ) {
+    if ( $links::File::verbose ) {
+	print STDERR "Running $SORTCODE sort $typesort $stem.tokens.tmp.$t \n";
+    }
+    open(TMPS,"$SORTCODE sort $SORTARGS $typesort $stem.tokens.tmp.$t |");
+    binmode TMPS, ":utf8";
+    my $typename = $type{$t};
+    while ( defined($_=<TMPS>) ) {
+	my $count = 1;
+	chomp();
+	if ( $typename eq "coll" && $links::File::collsize>1 ) {
+	    $count = () = ($_ =~ /$links::File::collsep/g); 
+	    $count++;
+	    s/$links::File::collsep/ /g;
+	    # print STDERR "COLL: $_\n";
+	}
+	/^([^ ]+) (?:[^ ]+) (?:[^ ]+) (.*)/;
+	my $tok = $2;
+	my $hash = $1;
+	print TOKENS "$tok\n";
+	print TOKENMAP "$line $typename $_\n";
+	if (  $count>1 ) {
+	    print TOKENLEN "$line $count\n";
+	}
+	if ( $docfeats && $t eq "a" ) {
+	    foreach my $id ( split(/ /,$docmap{$hash}) ) {
+		if ( !defined($docid{$id}) ) {
+		    print STDERR "Lost doc sequence number for docID $id\n";
+		}
+		print DOCMAP "$line $docid{$id}\n";
+	    }
+	}
+	$line++;
+    }
+    close(TMPS);
+}
+close(TOKENS);
+close(TOKENMAP);
+if ( $links::File::collsize>1 ) {
+    close(TOKENLEN);
+}
+if ( $docfeats ) {
+    close(DOCMAP);
+}
+unlink("$stem.tokens.tmp");
+foreach my $t ( keys %type ) {
+    unlink "$stem.tokens.tmp.$t";
+}
+$featcount = $line;
+
+#  now create some dimensions in .srcpar
+open(SRCPAR,">$stem.srcpar");
+print SRCPAR "documents=$doccount\n";
+print SRCPAR "features=$featcount\n";
+print SRCPAR "components=1\n";
+my $partE = "partition=\"0,";
+my $tagslongE = "tags_long=";
+my $tagsE = "tags=";
+my $typesE = 0;
+my $itc = 0;
+my %tagshort = ();
+foreach my $t ( @keylist ) {
+    print STDERR "Found type '$type{$t}' with $typecnt{$t} count\n";
+    $itc += $typecnt{$t};
+    $partE .= "$itc,";
+    $tagslongE .= "$type{$t},";
+    my $tag = toupper(substr($type{$t},0,1));
+    if ( defined($tagshort{$tag}) ) {
+	$tag = toupper(substr($type{$t},1,1));
+	if ( $tag eq "" ) {
+	    $tag = "A";
+	}
+	while ( defined($tagshort{$tag}) ) {
+	    if ( $tag eq "Z" ) {
+		$tag = "A";
+	    } else {
+		$tag = chr(ord($tag)+1);
+	    }
+	}	
+    }
+    $tagshort{$tag} = 1;
+    $tagsE .= "$tag,";
+    $typesE++;
+}
+$tagsE =~ s/,$//;
+$tagslongE =~ s/,$//;
+$partE =~ s/,$//;
+$partE .= "\"";
+print SRCPAR "n_partition=$typesE\n";
+print SRCPAR "$partE\n$tagslongE\n$tagsE\n";
+if ( $links::File::collsize>1 ) {
+    print SRCPAR "collsize=$links::File::collsize\n";
+}
+if ( $links::File::nolcase ) {
+    print SRCPAR "nolcase\n";
+}
+if ( $links::File::breakdash ) {
+    print SRCPAR "breakdash\n";
+}
+if ( $links::URLs::nocaseurl ) {
+    print SRCPAR "nocaseurl\n";
+}
+if ( $links::URLs::nocleanurl ) {
+    print SRCPAR "nocleanurl\n";
+}
+if ( $links::URLs::keepfragurl ) {
+    print SRCPAR "keepfragurl\n";
+}
+if ( $stopfile ) {
+    print SRCPAR "stopfile=\"$stopfile\"\n";
+}
+if ( $dfdocs>0 ) {
+    print SRCPAR "dfdocs=$dfdocs\n";
+} else {
+    print SRCPAR "dfdocs=$doccount\n";
+}
+close(SRCPAR);
+
+exit 0;
+
+__END__
+
+=head1 NAME
+    
+linkTables - input file of links and tokens for document set, 
+and generated token and document tables.
+
+=head1 SYNOPSIS
+    
+linkTables [options] LINK-FILE STEM
+
+ LINK-FILE               Filename for input links file
+ STEM                    Stem for output file, several extensions used
+ Options:
+    --breakdash         Don't split compounds on a '-' into separate 
+                        words, instead just delete the dash
+    --colllastnotstop   multiword collocations cannot end in a stop word
+    --collmin O         Minimum occurrence count to allow as collocation
+    --collnotstop       multiword collocations cannot contain a stop word
+    --collrepeat        by default no repeat words allowed in a collocation,
+                        use this option to allow them
+    --collsize C        Maximum length of collocations to collect
+    --dfdocs N       compute DF values on first N docs only
+    --dictsize D        Set max dictsize, when overran the dictionary 
+                        stored to disk
+    --docs              only update the .docs file, all else remains fixed
+    --keepfragurl       default removes URL fragments, this keeps them
+    --linktext          add link text, delimit by spaces, to text type
+    --maxcount M        only add tokens with no more than this many
+    --maxdf M           only add tokens with in more than this many docs
+    --match M           a Perl regexp that is used to identify words
+    --mincount M        only add tokens with at least this many
+    --mindf M           only add tokens in at least this many docs
+    --nocaseurl            ignore case of URLs
+    --nocleanurl           don't use built-in URL cleaning
+    --stopfile F        do not enter these words in text tables
+    --stemming          runs the default Lingua::Stem (Perl) stemmer on text
+    --tagged            note text has "#T" tags for T=v,n,j,N,d
+    --typematch M        a Perl regexp that is used to identify allowed types
+                        e.g.,  standard types are 'text', 'link', 'category', etc.
+    --titletext         add title text, delimit by spaces, to text type
+    --nolowercase       by default all words made lowercase, 
+                        this leaves upper case
+    -h, --help          display help message and exit.
+     --man              print man page and exit.
+    -v --verbose        increase verbosity level
+
+=head1 DESCRIPTION
+
+Input file of links, link text and redirects in the data format described
+next.  Assumed to be in UTF-8 encoding.  Builds the 
+tables used in bag/stream processing: 
+   STEM.tokens    N-th line is the token for items with index (N-1). 
+   STEM.words     A map for the token file includes token, 
+                  its type and the hash code, count and document frequency.
+   STEM.docs      N-th line is the details for the N-th document
+   STEM.docfeats  mapping of token index to document index
+   STEM.tpc       list of types seen, can be just "text"
+   STEM.srcpar    configuration parameters and dimensions passed to later routines
+
+The token to document index in .docfeats is implied after standardising OUTGOING-URLs for a document and the document URls themselves
+
+Often used in conjunction with XSL scripts to
+generate the text file giving URL+title+link+tag information for the input XML
+files.
+
+Various options affect tokenisation and selected tokens.  Stemming can be switched on, stop words filtered out.
+One can also provide a Perl match string to give legal tokens.
+
+Some useful match strings are as follows:
+   I<--match '^[[:alpha:]\p{Dash_Punctuation}]{3,}$'>
+         says match alphabetic strings of more than 2 characters, but also allowing dashes.
+   I<--match '^[[:alpha:]][[:alnum:]\p{Dash_Punctuation}_]{2,}$'>
+         same but first character must be alphabetic, and numbers are allowed subsequently too
+   
+
+=head1 DATA FORMAT
+
+The main input is the
+D form for documents and their links and link text
+        D <URL> <HASHID> <TITLE>
+        <OUTGOING-URL> <LINK-TEXT>
+        ...
+        EOL
+        <TYPE> <TOKENS>
+        ...
+        EOD
+
+The text "EOD" acts as a
+document terminator and can be missing if no tokens exist.
+The text "EOL" is a link terminator.  The <URL>s and <HASHID>s must not have
+spaces or the processing will get confused since R and D records are
+split on spaces.   Note text at the end of the line is an exception.
+<HASHID> is any externally defined record identifier.  The default
+is a 32 character hexadecimal from an MD5 hash of the text.
+
+<TYPE> is intended to be a short bit of alphabetic text describing the
+type such as 'person', 'company', etc.
+Reserved <TYPE>s are 'doc', link to a document in the collection,
+'link' which is a link out of the collection, 'text' which
+is any text, "stop" which are stop-words,
+and "coll" which are the collocations.  The last two ("stop" and "coll") 
+are only generated with the --collsize option.
+
+Input lines can have the R form for redirects:
+     R <URL> <URL-REDIRECTED-TO>
+These entries are ignored by this script, and should be first 
+eliminated with 
+I<linkRedir>(1).  
+
+Note, the ".words" file can be edited safely
+to affect the vocabulary without fully rerunning
+I<linkTables>.  
+This is handy when running on 30Gb input files since
+this takes half a day.
+Delete lines not needed.
+Stop words will usually be near the beginning.
+The file is ordered using type as the major key and
+frequency as the minor key.
+If edited, then regenerate the ".tokens" file using
+     cut -f "6-"  -d " "  STEM.words > STEM.tokens
+
+=head1 SEE ALSO
+
+I<links::File>(3), 
+I<links::URLs>(3), 
+I<linkBags>(1), 
+I<linkRedir>(1).
+
+text-bags is in 
+F<http://github.com>
+
+
+=head1 AUTHOR
+
+Wray Buntine
+
+=head1 COPYRIGHT AND LICENSE
+
+Copyright (C) 2005-2012 Wray Buntine
+
+This library is free software; you can redistribute it and/or modify
+it under the same terms as Perl itself, either Perl version 5.8.4 or,
+at your option, any later version of Perl 5 you may have available.
+
+=cut

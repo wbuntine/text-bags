@@ -1,0 +1,25 @@
+These examples show how you can use text-bags with the Reuters Corpus
+using a simple tokenising/bagging utility called linkBags.
+
+Reuters stopped distributing the corpus in 2004. 
+Instead, the Reuters corpus is now available from NIST, the 
+National Institute of Science and Technology. 
+
+The Reuters news items are in NewsML, an XML format, with one
+file per item.   So an XSLT extractor is supplied here.
+To create input for the linkBags suite, do something like this:
+	xsltproc reuters.xsl batch1/*.xml > rtrs.links
+	xsltproc reuters.xsl batch2/*.xml >> rtrs.links
+	...
+Probably best do in batches and concatenate the files.
+
+We then proceed with the usual use of linkBags:
+
+#  prepare symbol tables in the file stem "rtrs"
+#  using stopwords, and exclude tokens with less than 30 count
+linkTables --stopfile ../starthere/stops.txt --mincount 30 --stemming rtrs.links rtrs
+
+#  build bags in the stem rtrs
+linkBags --ldac rtrs.links rtrs
+
+
