@@ -20,6 +20,7 @@ my $dictsize = 0;
 my $docno = 0;
 #  set to filename containing lower case words to force lowercase
 my $LCDICT;  
+my $LCFIX;  
 
 #  hash of words to force lower-case
 my %lcword = (); 
@@ -27,6 +28,7 @@ my %lcword = ();
 #  check options
 
 GetOptions(
+    'lcfix=s' => \$LCFIX,
     'lcdict=s' => \$LCDICT,
     'man'      => sub {pod2usage(-exitstatus => 0, -verbose => 2)},
     'h|help'       => sub {pod2usage(1)},
@@ -130,7 +132,23 @@ if ( defined($LCDICT) ) {
         }
     }
     close(D);
-    print STDERR "Read $words words from '$LCDICT'\n";
+    print STDERR "Read lc $words words from '$LCDICT'\n";
+}
+if ( defined($LCFIX) ) {
+    my $words = 0;
+    open(D,"<$LCFIX") or die "Cannot open $LCFIX\n";
+    while ( (my $line=<D>) ) {
+        chomp($line);
+        $line =~ s/\s+/ /g;
+        $line =~ s/\s+$//g;
+        $line =~ s/^\s+//g;
+        foreach my $w ( split(/ /,$line) ) {
+            $lcword{lc($w)} = undef;
+            $words++;
+        }
+    }
+    close(D);
+    print STDERR "Read non-lc $words words from '$LCFIX'\n";
 }
 
 #  this is the standard input parsing skeleton
@@ -184,7 +202,6 @@ for (my $i=0; $i<=$#feattype; $i++) {
     }
     # sort by counts
     my @sset = sort { $set{$b} <=> $set{$a} } keys %set;
-    # print "$i $sset[0] " . $set{$sset[0]} . " :: " . $feattype[$i] . "\n";
     print "$sset[0]\n";
 }
 
@@ -207,6 +224,7 @@ Options:
     STEM             Stem for output file, a ".tokens2" file output.
     -h, --help       display help message and exit.
     --lcdict File    filename of lower-case dictionary.
+    --lcfix FixFile  exceptions to the lower-case dictionary.
      --man           print man page and exit.
 
 =head1 DESCRIPTION
