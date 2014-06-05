@@ -1,6 +1,7 @@
 #!/usr/bin/perl -w
 
 use strict;
+use utf8::all;
 use Getopt::Long;
 use Pod::Usage;
 use POSIX;
@@ -21,7 +22,6 @@ my $SORTCODE = "LC_ALL=en_US.UTF-8; export LC_ALL;" ;
 select((select(STDERR), $| = 1)[0]);
 
 # encoding pragmas follow any includes like "use"
-use encoding 'utf8';
 use open ':utf8';
 binmode STDIN, ":utf8";
 binmode STDERR, ":utf8";

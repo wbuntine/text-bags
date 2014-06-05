@@ -1,7 +1,7 @@
 #!/usr/bin/perl -w
 
 use strict;
-use utf8;
+use utf8::all;
 use POSIX;
 use HTML::Entities;
 use links::URLs;
@@ -12,7 +12,6 @@ use Lingua::Stem;
 use FileHandle;
            
 # encoding pragmas follow any includes like "use"
-use encoding 'utf8';
 use open ':utf8';
 binmode STDIN, ":utf8";
 binmode STDERR, ":utf8";

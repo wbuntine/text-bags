@@ -1,7 +1,7 @@
 #!/usr/bin/perl -w
 
 use strict;
-use utf8;
+use utf8::all;
 use POSIX;
 use HTML::Entities;
 use links::URLs;

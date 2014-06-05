@@ -8,6 +8,7 @@
 #       ignores fragments too
 
 use strict;
+use utf8::all;
 use POSIX;
 use HTML::Entities;
 use links::URLs;
@@ -16,7 +17,6 @@ use Getopt::Long;
 use Pod::Usage;
 
 # encoding pragmas follow any includes like "use"
-use encoding 'utf8';
 use open ':utf8';
 binmode STDOUT, ":utf8";
 binmode STDIN, ":utf8";

@@ -1,6 +1,7 @@
 #!/usr/bin/perl -w
 
 use strict;
+use utf8::all;
 use Getopt::Long;
 use Pod::Usage;
 use POSIX;
@@ -40,7 +41,6 @@ select((select(STDERR), $| = 1)[0]);
 
 # encoding pragmas follow any includes like "use"
 # the handles case where I/O is all UTF8, like Wikipedia
-use encoding 'utf8';
 use open ':utf8';
 binmode STDIN, ":utf8";
 binmode STDERR, ":utf8";
