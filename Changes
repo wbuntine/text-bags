@@ -30,3 +30,4 @@ Current release 0.7
         * moved user guide into 'doc/' with Makefile
         * changed name to "text-bags" (was DCA-bags)
         * new command linkTokens to create preferred capitalisation of tokens
+ 	* corrected 'utf8:all" to remove wide char problems
