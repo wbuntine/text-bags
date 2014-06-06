@@ -6,6 +6,7 @@ use POSIX;
 use HTML::Entities;
 use links::URLs;
 use links::File;
+use links::Text;
 use Getopt::Long;
 use Pod::Usage;
 use Lingua::Stem;
@@ -86,15 +87,15 @@ sub tablehash() {
 sub tabletext() {
     my $OKs = 0;
     my @tvec= ();
-    my $tw = &links::File::cleanpunct($_[0]);
-    my $nc = $links::File::nolcase;
-    $links::File::nolcase = 1;
-    my $tw2 = &links::File::cleanpunct($_[0]);
-    $links::File::nolcase = $nc;
+    my $tw = &links::Text::cleanpunct($_[0]);
+    my $nc = $links::Text::nolcase;
+    $links::Text::nolcase = 1;
+    my $tw2 = &links::Text::cleanpunct($_[0]);
+    $links::Text::nolcase = $nc;
     # print "TT: $tw\n";
     #  lower case by default, build vector of feature indices
-    my $sp = &links::File::tokenise($tw);
-    my $sp2 = &links::File::tokenise($tw2);
+    my $sp = &links::Text::tokenise($tw);
+    my $sp2 = &links::Text::tokenise($tw2);
     if ( scalar @{$sp} != scalar @{$sp2} ){
 	print STDERR "Texts different length ...\n TEXT-1: " .
 	    join(" ",@{$sp}) . "\n TEXT-2: " .
@@ -158,13 +159,13 @@ while ( defined($_=<I>) ) {
   chomp();
   if ( /^D ([^ ]*) ([^ ]*) (.*)$/ ) {
       $docno++;
-      if ( $links::File::titletext ) {
+      if ( $links::Text::titletext ) {
 	  &tabletext($3);
       }
       #   now process links
       for ( $_=<I>,chomp(); $_ && $_ ne "EOD" && $_ ne "EOL";
 	    $_=<I>,chomp() ) {
-	  if ( $links::File::linktext && /^([^ ]+) (.*)$/ ) {
+	  if ( $links::Text::linktext && /^([^ ]+) (.*)$/ ) {
 	      &tabletext($2);
 	  }
       }
@@ -240,6 +241,7 @@ but with the preferred capitalisation estimated from the content.
 
 I<links::URLs>(3), 
 I<links::File>(3), 
+I<links::Text>(3), 
 I<linkTables>(1).
 
 text-bags is in 

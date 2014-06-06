@@ -2,8 +2,8 @@ use ExtUtils::MakeMaker;
 # See lib/ExtUtils/MakeMaker.pm for details of how to influence
 # the contents of the Makefile that is written.
 WriteMakefile(
-    NAME         => 'text-bags',
-    VERSION_FROM => 'lib/links/URLs.pm', # finds \$VERSION
+    NAME         => 'links::Text',
+    VERSION_FROM => 'lib/links/Text.pm', # finds \$VERSION
     AUTHOR       => 'Wray Buntine',
     ABSTRACT     => 'Simple bag/list generation and for text and link preprocessing',
     PREREQ_PM    => {HTML::Entities => 0, Encode => 0, Getopt::Long => 0,

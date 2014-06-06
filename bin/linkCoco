@@ -6,6 +6,7 @@ use POSIX;
 use HTML::Entities;
 use links::URLs;
 use links::File;
+use links::Text;
 use Getopt::Long;
 use Pod::Usage;
 use Lingua::Stem;
@@ -85,7 +86,7 @@ sub dumppairs() {
     open(TMPD,">>$stem.$suffix.tmp");
     foreach my $t ( keys(%pairscnt) ) {
 	$t =~ /^(.*)#@#(.*)$/;
-	    my $k1 = $1;
+	my $k1 = $1;
 	my $k2 = $2; 
 	print TMPD "$k1 $k2 $pairscnt{$t}\n";
     }
@@ -98,10 +99,10 @@ sub dumppairs() {
 sub tabletext() {
     my $OKs = 0;
     my @tvec= ();
-    my $tw = &links::File::cleanpunct($_[0]);
+    my $tw = &links::Text::cleanpunct($_[0]);
     # print "TT: $tw\n";
     #  lower case by default, build vector of feature indices
-    my $sp = &links::File::tokenise($tw);
+    my $sp = &links::Text::tokenise($tw);
     foreach my $k ( @$sp ) {
 	my $kk = $featmap{&tablehash($k)};
 	if ( !defined($kk) ) {
@@ -116,10 +117,10 @@ sub tabletext() {
     }
     my %windowhash = ();
     $fullcount += ($#tvec + 1);
-    if ( $#tvec - $WINDOW < 1 ) {
+    if ( ($#tvec+1) - $WINDOW <= 0 ) {
 	$windowcount ++;
     } else {
-    	$windowcount += $#tvec - $WINDOW;
+    	$windowcount += $#tvec - $WINDOW + 2;
     }
     for (my $i=0; $i<=$#tvec; $i++) {
 	my $k = $tvec[$i];
@@ -167,13 +168,13 @@ while ( defined($_=<I>) ) {
   chomp();
   if ( /^D ([^ ]*) ([^ ]*) (.*)$/ ) {
       $docno++;
-      if ( $links::File::titletext ) {
+      if ( $links::Text::titletext ) {
 	  &tabletext($3);
       }
       #   now process links
       for ( $_=<I>,chomp(); $_ && $_ ne "EOD" && $_ ne "EOL";
 	    $_=<I>,chomp() ) {
-	  if ( $links::File::linktext && /^([^ ]+) (.*)$/ ) {
+	  if ( $links::Text::linktext && /^([^ ]+) (.*)$/ ) {
 	      &tabletext($2);
 	  }
       }

@@ -6,6 +6,7 @@ use POSIX;
 use HTML::Entities;
 use links::URLs;
 use links::File;
+use links::Text;
 use Getopt::Long;
 use Pod::Usage;
 use Lingua::Stem;
@@ -62,27 +63,27 @@ GetOptions(
      'man'       => sub {pod2usage(-exitstatus => 0, -verbose => 2)},
       'stopfile=s' => \$stopfile,
       'typematch=s'    => \$typematch,
-      'match=s'    => \$links::File::wordmatch,
+      'match=s'    => \$links::Text::wordmatch,
       'mincount=i' => \$MINCOUNT,
       'mindf=i' => \$MINDF,
-      'breakdash!'   => \$links::File::breakdash,
+      'breakdash!'   => \$links::Text::breakdash,
       'docfeats'   => \$docfeats,
       'dfdocs=i',  =>  \$dfdocs,
       'maxcount=i' => \$MAXCOUNT,
       'maxdf=i' => \$MAXDF,
       'dictsize=i' => \$DICTSIZE,
-      'collsize=i' => \$links::File::collsize,
-      'colllastnotstop!' => \$links::File::colllastnotstop,
-      'collnotstop!' => \$links::File::collnotstop,
-      'collrepeat!' => \$links::File::collrepeatwords,
+      'collsize=i' => \$links::Text::collsize,
+      'colllastnotstop!' => \$links::Text::colllastnotstop,
+      'collnotstop!' => \$links::Text::collnotstop,
+      'collrepeat!' => \$links::Text::collrepeatwords,
       'collmin=i' => \$COLLMIN,
-      'nolowercase!' => \$links::File::nolcase,
+      'nolowercase!' => \$links::Text::nolcase,
       'docs' => \$fixdocs,
-      'tagged!' => \$links::File::tagged,
+      'tagged!' => \$links::Text::tagged,
       'typesort=s' => \$typesort,
-      'linktext!' => \$links::File::linktext,
+      'linktext!' => \$links::Text::linktext,
       'stemming' => \$links::File::stemming,
-      'titletext!' => \$links::File::titletext,
+      'titletext!' => \$links::Text::titletext,
       'v|verbose' => \$links::File::verbose,
       'nocleanurl!' => \$links::URLs::nocleanurl,
       'nocaseurl!' => \$links::URLs::nocaseurl,
@@ -146,22 +147,22 @@ if ( $stopfile ) {
 sub coll_tok_legal() {
     my $tok = shift();
     my $tok1 = $tok;
-    if ( $links::File::colllastnotstop!=0 && $tok1 =~ s/.*$links::File::collsep// ) {
+    if ( $links::Text::colllastnotstop!=0 && $tok1 =~ s/.*$links::Text::collsep// ) {
 	if ( defined($links::File::stops{lc($tok1)}) ) {
 	    return 0;
 	}
     }
-    if ( $links::File::collnotstop!=0 ) {
-	if ( grep(defined($links::File::stops{lc($_)}), split(/$links::File::collsep/,$tok))>0 ) {
+    if ( $links::Text::collnotstop!=0 ) {
+	if ( grep(defined($links::File::stops{lc($_)}), split(/$links::Text::collsep/,$tok))>0 ) {
 	    return 0;
 	}
     }
-    if ( $links::File::collrepeatwords==0 ) {
+    if ( $links::Text::collrepeatwords==0 ) {
 	my %a = ();
-	foreach my $t ( split(/$links::File::collsep/,$tok) ) {
+	foreach my $t ( split(/$links::Text::collsep/,$tok) ) {
 	    if ( defined($a{$t}) ) {
 		my $ptok = $tok;
-		$ptok =~ s/$links::File::collsep/ /g;
+		$ptok =~ s/$links::Text::collsep/ /g;
 		print STDERR "  ... dropping token '$ptok' with repeats '$t'\n";
 		return 0;
 	    }
@@ -423,8 +424,8 @@ while ( defined($_=<I>) ) {
 	}
     }
     $line ++;	  
-    if ( $links::File::titletext ) {
-      &links::File::tabletext(\&table,$titles);
+    if ( $links::Text::titletext ) {
+      &links::Text::tabletext(\&table,$titles);
     }
     #   now process links
     for ( $_=<I>,chomp(); $_ && $_ ne "EOD" && $_ ne "EOL";
@@ -438,8 +439,8 @@ while ( defined($_=<I>) ) {
 	    if ( &table("link",$link)!=0 ) {
 		print STDERR "Couldn't table link for $_\n";
 	    } else {
-		if ( $links::File::linktext && /^([^ ]+) (.*)$/ ) {
-		    &links::File::tabletext(\&table,$2);
+		if ( $links::Text::linktext && /^([^ ]+) (.*)$/ ) {
+		    &links::Text::tabletext(\&table,$2);
 		}
 	    }
 	}
@@ -450,7 +451,7 @@ while ( defined($_=<I>) ) {
 	    $_=<I>,chomp() ) {
 	if ( /^([^ ]+) (.*)$/ ) {
 	  if ( $1 eq "text" ) {
-	    &links::File::tabletext(\&table,$2);
+	    &links::Text::tabletext(\&table,$2);
 	  } else {
 	    &table($1,$2);
 	  }
@@ -522,7 +523,7 @@ close(TPC);
 open(TOKENS,">$stem.tokens");
 binmode TOKENS, ":utf8";
 open(TOKENMAP,">$stem.words");
-if ( $links::File::collsize>1 ) {
+if ( $links::Text::collsize>1 ) {
     open(TOKENLEN,">$stem.wordlen");
 }
 binmode TOKENMAP, ":utf8";
@@ -531,7 +532,7 @@ if ( $docfeats ) {
 }
 $line = 0;
 my @keylist = ();
-if ( $links::File::collsize>1 && defined($stoptype) ) {
+if ( $links::Text::collsize>1 && defined($stoptype) ) {
     @keylist = ($stoptype);
     push(@keylist, grep( $typecnt{$_}>0 && ($_ ne $stoptype),  
 			 sort keys %type) );
@@ -548,10 +549,10 @@ foreach my $t ( @keylist ) {
     while ( defined($_=<TMPS>) ) {
 	my $count = 1;
 	chomp();
-	if ( $typename eq "coll" && $links::File::collsize>1 ) {
-	    $count = () = ($_ =~ /$links::File::collsep/g); 
+	if ( $typename eq "coll" && $links::Text::collsize>1 ) {
+	    $count = () = ($_ =~ /$links::Text::collsep/g); 
 	    $count++;
-	    s/$links::File::collsep/ /g;
+	    s/$links::Text::collsep/ /g;
 	    # print STDERR "COLL: $_\n";
 	}
 	/^([^ ]+) (?:[^ ]+) (?:[^ ]+) (.*)/;
@@ -576,7 +577,7 @@ foreach my $t ( @keylist ) {
 }
 close(TOKENS);
 close(TOKENMAP);
-if ( $links::File::collsize>1 ) {
+if ( $links::Text::collsize>1 ) {
     close(TOKENLEN);
 }
 if ( $docfeats ) {
@@ -628,13 +629,13 @@ $partE =~ s/,$//;
 $partE .= "\"";
 print SRCPAR "n_partition=$typesE\n";
 print SRCPAR "$partE\n$tagslongE\n$tagsE\n";
-if ( $links::File::collsize>1 ) {
-    print SRCPAR "collsize=$links::File::collsize\n";
+if ( $links::Text::collsize>1 ) {
+    print SRCPAR "collsize=$links::Text::collsize\n";
 }
-if ( $links::File::nolcase ) {
+if ( $links::Text::nolcase ) {
     print SRCPAR "nolcase\n";
 }
-if ( $links::File::breakdash ) {
+if ( $links::Text::breakdash ) {
     print SRCPAR "breakdash\n";
 }
 if ( $links::URLs::nocaseurl ) {

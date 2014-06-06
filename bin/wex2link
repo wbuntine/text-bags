@@ -6,7 +6,6 @@ use Getopt::Long;
 use Pod::Usage;
 use POSIX;
 use Encode;
-use links::File;
 use links::URLs;
 use HTML::Entities;
 use XML::Parser;

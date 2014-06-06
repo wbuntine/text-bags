@@ -31,3 +31,5 @@ Current release 0.7
         * changed name to "text-bags" (was DCA-bags)
         * new command linkTokens to create preferred capitalisation of tokens
  	* corrected 'utf8:all" to remove wide char problems
+Current release 0.71
+	* whoops, NAME was wrong in Makefile.pm so created Text.pm

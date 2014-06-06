@@ -8,6 +8,7 @@ use POSIX;
 use Encode;
 use links::URLs;
 use links::File;
+use links::Text;
 use IO::Handle; 
 use Lingua::Stem;
 
@@ -72,7 +73,7 @@ sub table() {
 sub MakeBags() {
     while ( defined($_=<>) ) {
 	chomp();
-	&links::File::tabletext(\&table,$_);
+	&links::Text::tabletext(\&table,$_);
     }
     #   now print the constructed record
     print ($#feats+1);

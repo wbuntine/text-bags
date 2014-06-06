@@ -8,6 +8,7 @@ use POSIX;
 use Encode;
 use links::URLs;
 use links::File;
+use links::Text;
 use IO::Handle; 
 use Lingua::Stem;
 
@@ -162,8 +163,8 @@ sub MakeBags() {
 	    my $titles = $3;
 	    %feats = ();
 	    @feats = ();
-	    if ( $links::File::titletext ) {
-		my $got = &links::File::tabletext(\&table,$titles);
+	    if ( $links::Text::titletext ) {
+		my $got = &links::Text::tabletext(\&table,$titles);
 		$sagtext .= $got;
 	    }
 	    #   now process links
@@ -174,8 +175,8 @@ sub MakeBags() {
 		# print STDERR "LINK: $link $_\n";
 		$link = &links::URLs::StandardURL($link);
 		&table("link",$link);
-		if ( $links::File::linktext && /^([^ ]+) (.*)$/ ) {
-		    my $got = &links::File::tabletext(\&table,$2);
+		if ( $links::Text::linktext && /^([^ ]+) (.*)$/ ) {
+		    my $got = &links::Text::tabletext(\&table,$2);
 		    $sagtext .= $got;
 		}
 	    }
@@ -185,7 +186,7 @@ sub MakeBags() {
 		      $_=<IN>,chomp() ) {
 		    if ( /^([^ ]+) (.*)$/ ) {
 			if ( $1 eq "text" ) {
-			    my $got = &links::File::tabletext(\&table,$2);
+			    my $got = &links::Text::tabletext(\&table,$2);
 			    $sagtext .= $got;
 			} else {
 			    &table($1,$2);
@@ -493,7 +494,7 @@ if ( $stc || $libsvm ) {
 }
 if ( $sag ) {
     $coll = 1;
-    $links::FILE::buildtext = 1;
+    $links::Text::buildtext = 1;
 }
 if ( $ldacol ) {
     $coll = 1;
@@ -661,9 +662,9 @@ if ( $coll ) {
     print STDERR "Collocation length counts\n";
     print STDERR "  phrase breaks or rare words = $collcnt[0]\n";
     print STDERR "  words with no collocations = $collcnt[1]\n";
-    if ( $links::File::collsize>2 ) {
+    if ( $links::Text::collsize>2 ) {
 	print STDERR "  words with 2... collocations = " .
-	    join(" ",@collcnt[2..$links::File::collsize]) . "\n";
+	    join(" ",@collcnt[2..$links::Text::collsize]) . "\n";
     } else {
 	print STDERR "  words with 2 collocations = $collcnt[2]\n";
     }

@@ -6,6 +6,7 @@ use POSIX;
 #  use this to split lines for sentences
 use Lingua::EN::Sentence qw( get_sentences  );
 use links::File;
+use links::Text;
 use Pod::Usage;
 
 #  autoflush
@@ -30,7 +31,7 @@ while ( <> ) {
 	    print STDERR "Cannot get sentences for $_\n";
 	}
 	foreach my $x (@$sentences) {
-	    # $x=&links::File::cleanpunct($x);
+	    # $x=&links::Text::cleanpunct($x);
 	    print "text $x\n";
 	}
     }
