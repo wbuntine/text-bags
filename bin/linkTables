@@ -777,9 +777,17 @@ this takes half a day.
 Delete lines not needed.
 Stop words will usually be near the beginning.
 The file is ordered using type as the major key and
-frequency as the minor key.
+document frequency as the minor key.
 If edited, then regenerate the ".tokens" file using
      cut -f "6-"  -d " "  STEM.words > STEM.tokens
+
+=head1 ERRORS
+
+If their is trouble reading input files, and they seem OK, then be
+sure to check Windows end-of-line characters are not present.  The system
+has not robust to these.  A fix is:
+     perl -pi -e 's/\r\n/\n/g' FILE.links
+
 
 =head1 SEE ALSO
 
