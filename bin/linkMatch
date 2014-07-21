@@ -64,7 +64,7 @@ sub MatchBags() {
 	    } else {
 		my ($k,$t) = ($_ =~ /^([^ ]*)? (.*)$/);
 		# print STDERR "Testing key $k ... $t\n";
-		if ( defined($metaexp{$k}) ) {
+		if ( defined($k) && defined($metaexp{$k}) ) {
 		    if ( $t =~ /$metaexp{$k}/ ) {
 			$keymatch++;
 		    }
