@@ -88,7 +88,7 @@ sub tokenise() {
 	return $links::File::stemmer->stem(
 	    grep(!defined($links::Text::stops{lc($_)}), 
 		 split(/\s+/,$text)));
-    } else {
+    } else {  
 	my @sp;
 	if ( $links::Text::nostops ) {
 	    @sp = split(/\s+/,$text);
@@ -152,7 +152,7 @@ sub tabletext() {
 	    } else {
 		if ( $links::Text::wordmatch eq ""
 		     ||  $a->[$i] =~ /$links::Text::wordmatch/ ) {
-		    print STDERR "$a->[$i] ## $links::Text::wordmatch\n";
+		    # print STDERR "$a->[$i] ## $links::Text::wordmatch\n";
 		    &$table("text", $a->[$i]);
 		    for (my $s=1; $s<$smax; $s++) {
 			my $k = join($links::Text::collsep,@$a[$i..$i+$s]);
