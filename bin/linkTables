@@ -546,21 +546,25 @@ foreach my $t ( @keylist ) {
     open(TMPS,"$SORTCODE sort $SORTARGS $typesort $stem.tokens.tmp.$t |");
     binmode TMPS, ":utf8";
     my $typename = $type{$t};
+    my $stoptype = $typerev{"stop"};
     while ( defined($_=<TMPS>) ) {
 	my $count = 1;
 	chomp();
 	if ( $typename eq "coll" && $links::Text::collsize>1 ) {
-	    $count = () = ($_ =~ /$links::Text::collsep/g); 
-	    $count++;
+	    my $wt = $_;
+	    $wt =~ s/.* //;
+	    my @words = grep(!defined($links::File::stops{lc($_)}), 
+			     split(/$links::Text::collsep/,$wt));
+	    $count = ($#words+1);
 	    s/$links::Text::collsep/ /g;
-	    # print STDERR "COLL: $_\n";
+	    # print STDERR "COLL: $_ -> " . join(".",@words) . "\n";
 	}
 	/^([^ ]+) (?:[^ ]+) (?:[^ ]+) (.*)/;
 	my $tok = $2;
 	my $hash = $1;
 	print TOKENS "$tok\n";
 	print TOKENMAP "$line $typename $_\n";
-	if (  $count>1 ) {
+	if ( $typename eq "coll" ) {
 	    print TOKENLEN "$line $count\n";
 	}
 	if ( $docfeats && $t eq "a" ) {

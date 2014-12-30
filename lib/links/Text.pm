@@ -115,7 +115,9 @@ sub tabletext() {
 	my $a = &links::Text::tokenise($tw);
 	# print STDERR "Checking $#$a words, $a->[0] $a->[1] ...\n";
 	for (my $i=0; $i<=$#$a; $i++) {
-	    if ( $a->[$i] eq "" ) {
+	    if ( $a->[$i] eq "" ||
+		 ( $links::Text::wordmatch ne ""
+		   && $a->[$i] !~ /$links::Text::wordmatch/ ) ) {
 		next;
 	    }
 	    if ( $links::Text::buildtext==1 ) {
@@ -127,46 +129,28 @@ sub tabletext() {
 		$smax = $#$a + 1 - $i;
 	    }
 	    # print STDERR "   '$a->[$i]' by $smax\n";
+	    my $cntstops = 0;
 	    if ( defined($links::File::stops{lc($a->[$i])}) ) {
 		&$table("stop", $a->[$i]);
-		#  this to prevent entering coll. with 100% stops
-		#  or just 2 words, the first being a stop
-		if ( $smax>2 ) {
-		    my $allstops = defined($links::File::stops{lc($a->[$i+1])});
-		    for (my $s=2; $s<$smax; $s++) {
-			if ( $allstops && !defined($links::File::stops{lc($a->[$i+$s])}) ) {
-			    $allstops = 0;
-			}
-			if ( $allstops==0 ) {
-			    my $k = join($links::Text::collsep,@$a[$i..$i+$s]);
-			    if ( !$links::Text::colllastnotstop ||
-				 !defined($links::File::stops{lc($a->[$i+$s])}) )
-			    {
-				if ( &$table("coll", $k) == 1 ) {
-				    $multi++;
-				} 
-			    }
-			} 
-		    }
-		}
+		$cntstops ++;
 	    } else {
-		if ( $links::Text::wordmatch eq ""
-		     ||  $a->[$i] =~ /$links::Text::wordmatch/ ) {
-		    # print STDERR "Table '$a->[$i]' with smax=$smax ## $links::Text::wordmatch\n";
-		    &$table("text", $a->[$i]);
-		    for (my $s=1; $s<$smax; $s++) {
-			my $k = join($links::Text::collsep,@$a[$i..$i+$s]);
-			# print STDERR "  trying $k\n";
-			if ( !$links::Text::colllastnotstop ||
-			     !defined($links::File::stops{lc($a->[$i+$s])}) )
-			{
-			    # print STDERR "  tabling $k\n";
-			    if ( &$table("coll", $k) == 1 ) {
-				$multi++;
-			    }
-			}
-		    }
+		&$table("text", $a->[$i]);
+	    }
+	    for (my $s=1; $s<$smax; $s++) {
+		my $thisstop = 0;
+		if ( defined($links::File::stops{lc($a->[$i+$s])}) ) {
+		    $cntstops ++;
+		    $thisstop = 1;
 		}
+		#   stops must be less than half
+		if ( ($cntstops*2 < $s+1) &&
+		     (!$links::Text::colllastnotstop || !$thisstop) ) {
+		    my $k = join($links::Text::collsep,@$a[$i..$i+$s]);
+		    # print STDERR "  tabling $k\n";
+		    if ( &$table("coll", $k) == 1 ) {
+			$multi++;
+		    }
+		} 
 	    }
 	    &$table("endword", "");
 	    # print STDERR "Did '$a->[$i]' with multi=$multi\n";

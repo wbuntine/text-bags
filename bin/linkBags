@@ -39,6 +39,7 @@ my $sag = 0;     #  Mark Johnson's version of Steyvers and Griffiths streams
 my $matlab = 0;
 my $landu = 0;
 my $landuS = 0;
+my $repcoll = 0;
 my $stc = 0;
 my $libsvm = 0;
 my $dfdocs = 0;  #  read from .srcpar file
@@ -52,8 +53,11 @@ my %topiccode = ("none", 0);
 my $topiccodecount = 0;
 my $doccount = 0;
 my $featcount = 0;
+my %feattype = ();       #  maps feature hash to type code; used with --repcoll
 my %featmap = ();        #  maps feature hash to feature index
 my %docfeat = ();        #  true if its a doc/internal link
+my %colllen = ();        #  length of coll after stops removed
+my %wordlen = ();        #  words in coll, used with --repcoll
 my %type = ();
 my %typerev = ();
 # my @token = ();
@@ -290,6 +294,31 @@ sub MakeBags() {
 		}
 		# print STDERR "\n";
 		print OUT "\n";		
+	    } elsif ( $nobag && $repcoll ) {
+	        my @colls = ();
+	        my @lst = ();
+		my $stoptype = $typerev{"stop"};
+		my $colltype = $typerev{"coll"};
+		@feats = grep($feattype{$_} ne $stoptype, @feats);
+		for (my $k=0; $k<=$#feats; $k++ ) {
+		    $_ = $feats[$k];
+		    if ( $feattype{$_} eq $colltype ) {
+			push(@colls, ($#lst+1) . " $_");
+		    } else {
+			push(@lst,$_);
+		    }
+		}
+		print OUT ($#lst+1);
+		for (my $k=0; $k<=$#lst; $k++ ) {
+		    print OUT " $featmap{$lst[$k]}";
+		}
+		print OUT "\n";
+		print OUTCR ($#colls+1);
+		for (my $k=0; $k<=$#colls; $k++ ) {
+		    my ($pos,$h) = split(" ",$colls[$k]);
+		    print OUTCR " $pos $wordlen{$featmap{$h}} $featmap{$h}";
+		}
+		print OUTCR "\n";
 	    } elsif ( $nobag ) {
 		print OUT ($#feats+1);
 		for (my $k=0; $k<=$#feats; $k++ ) {
@@ -351,6 +380,7 @@ sub LoadTables() {
   open(FEATS,"<$stem.words");
   binmode FEATS, ":utf8";
   #  load up the mappings, precomputed
+  %feattype = ();
   %featmap = ();
   $featcount = 0;
   while ( defined($_=<FEATS>) ) {
@@ -359,6 +389,9 @@ sub LoadTables() {
     $featmap{$a[2]} = $a[0];
     if ( $a[1] eq "doc" ) {
 	$docfeat{$a[2]} = 1;
+    }
+    if ( $repcoll ) {
+	$feattype{$a[2]} = $typerev{$a[1]};
     }
     if ( $a[1] eq "stop" ) {
 	if ( defined($a[6]) ) {
@@ -426,6 +459,15 @@ sub LoadTables() {
 	  exit(1);
       }
   }
+  if ( $repcoll ) {
+      open(WL,"<$stem.wordlen");
+      while ( ($_=<WL>) ) {
+	  chomp();
+	  my ($k,$l) = split(/ /,$_);
+	  $wordlen{$k} = $l;
+      }
+      close(WL);
+  }
   if ( $libsvm ) {
       open(SRCPAR, "grep dfdocs= $stem.srcpar |");
       my $fc = <SRCPAR>;
@@ -459,6 +501,7 @@ GetOptions(
       'ldacol!' => \$ldacol,
       'numbertopic!' => \$numbertopic,
       'ldac!' => \$ldac,
+      'repcoll!' => \$repcoll, 
       'sag!' => \$sag,
       'stc!' => \$stc,
       'out=s' => \$stemout,
@@ -619,6 +662,9 @@ if ( $matlab!= 0 ) {
 	    print STDERR "Stream output to '$sagfile'\n";
  	}
     }
+    if ( $repcoll ) {
+	open(OUTCR,">$stemout.colls");
+    }
     if ( $append ) {
 	open(OUT,">>$tfile");
 	print STDERR "Appending output to '$tfile'\n";
@@ -638,6 +684,9 @@ if ( $matlab!= 0 ) {
 #  sorts the bags prior to saving, and cut out the document number
     &MakeBags(); 
     close(OUT); 
+    if ( $repcoll ) {
+	close(OUTCR);
+    }
     if ( $ldac==0 ) {
 #  we want to write to the front of the file,
 #  without destroying rest of contents, this open does it
@@ -736,6 +785,7 @@ Options:
     --numbertopic       when topics output, convert them to integers 1,2,...
                         according to the order given in the .words file
     --out STEMOUT       put output files to STEMOUT not STEM
+    --repcoll           used with --nobag to produce separate collocation report
     --sag               Johnson's format of LDA-COL
     --stc               Zhu's format for STC, extension of LDA-C format
     --witdit            output into Dave Newman's .wit and .dit format
@@ -774,6 +824,7 @@ I <--out> option is used,
 then they go to STEMOUT.EXt instead.
 EXT is one of:
 
+    .colls       : collocation (only) report matching .txtbag from "--repcoll"
     .docs, .titles : rebuilt if --docs used
     .libsvm      : Libsvm format initiated by --libsvm
     .termlst     : collocation stream data initiated by --col
@@ -828,6 +879,19 @@ where the second document has words now in order of occurence,
 and "118" appears twice.  Note also the word counts at the beginning
 of the line can now be greater:  they count the words in the stream,
 not the number of distinct words in the bag.
+
+When 
+I<--repcoll> option is used with 
+I<--nobag> option then no stopwords are included and collocations
+are listed in a separate file, one line per document, the
+F<STEM.colls> file.
+Each line has the format
+    3 4 2 19831 21 2 21645
+First number is count of collocations in the document.
+Each collocation has 3 integers.  The first is the zero-based
+offset where the collocation is found.  Second is the length in
+words.  Third is the zero-based collocation index in the 
+F<STEM.tokens> file.
 
 The
 I<--ldac> option modifies the default option in two ways. 
