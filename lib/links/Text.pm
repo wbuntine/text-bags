@@ -113,7 +113,7 @@ sub tabletext() {
 	my $multi = 0;
 	$links::Text::nostops = 1;
 	my $a = &links::Text::tokenise($tw);
-	#print STDERR "Checking $#$a words, $a->[0] $a->[1] ...\n";
+	# print STDERR "Checking $#$a words, $a->[0] $a->[1] ...\n";
 	for (my $i=0; $i<=$#$a; $i++) {
 	    if ( $a->[$i] eq "" ) {
 		next;
@@ -126,7 +126,7 @@ sub tabletext() {
 	    if ( $i>$#$a - $links::Text::collsize+1 ) {
 		$smax = $#$a + 1 - $i;
 	    }
-	    #print STDERR "$a->[$i] by $smax\n";
+	    # print STDERR "   '$a->[$i]' by $smax\n";
 	    if ( defined($links::File::stops{lc($a->[$i])}) ) {
 		&$table("stop", $a->[$i]);
 		#  this to prevent entering coll. with 100% stops
@@ -152,13 +152,15 @@ sub tabletext() {
 	    } else {
 		if ( $links::Text::wordmatch eq ""
 		     ||  $a->[$i] =~ /$links::Text::wordmatch/ ) {
-		    # print STDERR "$a->[$i] ## $links::Text::wordmatch\n";
+		    # print STDERR "Table '$a->[$i]' with smax=$smax ## $links::Text::wordmatch\n";
 		    &$table("text", $a->[$i]);
 		    for (my $s=1; $s<$smax; $s++) {
 			my $k = join($links::Text::collsep,@$a[$i..$i+$s]);
+			# print STDERR "  trying $k\n";
 			if ( !$links::Text::colllastnotstop ||
 			     !defined($links::File::stops{lc($a->[$i+$s])}) )
 			{
+			    # print STDERR "  tabling $k\n";
 			    if ( &$table("coll", $k) == 1 ) {
 				$multi++;
 			    }
@@ -167,7 +169,7 @@ sub tabletext() {
 		}
 	    }
 	    &$table("endword", "");
-	    # print STDERR "Did $a->[$i] with $multi\n";
+	    # print STDERR "Did '$a->[$i]' with multi=$multi\n";
 	    if ( ($links::Text::buildtext==1) && ($multi==0) ) {
 		$text .= "\n";
 		$multicnt ++;
