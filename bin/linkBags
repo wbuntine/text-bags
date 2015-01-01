@@ -886,11 +886,13 @@ I<--nobag> option then no stopwords are included and collocations
 are listed in a separate file, one line per document, the
 F<STEM.colls> file.
 Each line has the format
-    3 4 2 19831 21 2 21645
+    3 4 2 19831 21 2 21645 47 3 20156
 First number is count of collocations in the document.
 Each collocation has 3 integers.  The first is the zero-based
-offset where the collocation is found.  Second is the length in
-words.  Third is the zero-based collocation index in the 
+offset where the collocation is found in the document's 
+F<STEM.txtbag> entry,
+second is the length in
+words, third is the zero-based collocation index in the 
 F<STEM.tokens> file.
 
 The

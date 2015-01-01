@@ -23,6 +23,7 @@ my $SORTARGS = "" ;
 
 #  collocation minimum count to use
 my $COLLMIN = 4;
+my $COLLMINDF = 3;
 
 my $MINCOUNT = 1;
 my $dfdocs = 0;
@@ -77,7 +78,8 @@ GetOptions(
       'collnotstop!' => \$links::Text::collnotstop,
       'collrepeat!' => \$links::Text::collrepeatwords,
       'collmin=i' => \$COLLMIN,
-      'nolowercase!' => \$links::Text::nolcase,
+      'collmindf=i' => \$COLLMINDF,
+       'nolowercase!' => \$links::Text::nolcase,
       'docs' => \$fixdocs,
       'tagged!' => \$links::Text::tagged,
       'typesort=s' => \$typesort,
@@ -496,7 +498,7 @@ while ( &is_next_tok() ) {
     if ( ( (!defined($colltype) || ($colltype ne $type)) 
 	     && $cnt>=$MINCOUNT && $df>=$MINDF && $cnt<=$MAXCOUNT && $df<=$MAXDF )
 	 || (defined($colltype) && ($colltype eq $type) && 
-	     ($cnt >= $COLLMIN) && &coll_tok_legal($tok) ) ) {
+	     ($cnt >= $COLLMIN) && ($df >= $COLLMINDF) && &coll_tok_legal($tok) ) ) {
 	my $fh = $fht{$type};
 	if ( !defined($fh) ) {
 	    print STDERR "Internal filing error for $stem.tokens.tmp\n";
@@ -680,7 +682,8 @@ linkTables [options] LINK-FILE STEM
     --breakdash         Don't split compounds on a '-' into separate 
                         words, instead just delete the dash
     --colllastnotstop   multiword collocations cannot end in a stop word
-    --collmin O         Minimum occurrence count to allow as collocation
+    --collmin O         Minimum occurrence count for collocation (default=4)
+    --collmindf O       Minimum doc-freq for collocation (default=3)
     --collnotstop       multiword collocations cannot contain a stop word
     --collrepeat        by default no repeat words allowed in a collocation,
                         use this option to allow them
