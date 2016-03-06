@@ -42,7 +42,7 @@ Then run to do the installs of prereq packages.
     sudo cpan install Digest::MD5 Encode FileHandle File::Tail 
     sudo cpan install Getopt::Long HTML::Entities POSIX
     sudo cpan install IO::Handle IO::Pipe Lingua::EN::Sentence
-    sudo cpan install Lingua::Stem Pod::Usage URI XML::Parser
+    sudo cpan install Lingua::Stem Pod::Usage URI XML::Parser utf8::all
 These are standard packages so all should go smoothly.
 
 INSTALLATION
