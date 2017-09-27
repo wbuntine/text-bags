@@ -86,7 +86,7 @@ sub tokenise() {
 	    return $links::File::stemmer->stem(split(/\s+/,$text));
 	} 
 	return $links::File::stemmer->stem(
-	    grep(!defined($links::Text::stops{lc($_)}), 
+	    grep(!defined($links::File::stops{lc($_)}), 
 		 split(/\s+/,$text)));
     } else {  
 	my @sp;
