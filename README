@@ -95,9 +95,6 @@ Getting Started
 Install the software.
 Then work through the example in examples/starthere/
 and the man pages do a basic job of describing options.
-Note the webpage
-       http://www.nicta.com.au/people/buntinew/softwareanddata
-should have links to some interesting datasets to try.
 
 linkParse does a parse but doesn't integrate anything
 back.   Note always run linkSent on the files first so C&C gets
